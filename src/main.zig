@@ -6,8 +6,6 @@ const Entity = ?usize;
 
 const component_allocator = std.testing.allocator;
 
-const ComponentStorageError = error{ EntityMissingComponent, InvalidEntity, OldEntity };
-
 // TODO: Turn this struct into PackedSet
 fn ComponentStorage(comptime ty: type) type {
     return struct {
@@ -17,97 +15,23 @@ fn ComponentStorage(comptime ty: type) type {
         // If an entry is 0, that entity doesn't have this component. Otherwise,
         // the entity's component's data is in the packed set at index i-1, where i is the
         // value in the sparse sent.
-        sparse_set: std.ArrayList(?usize),
+        // sparse_set: std.ArrayList(?usize),
         packed_set: std.MultiArrayList(ty),
 
-        pub fn init(self: *Self, alloc_count: usize) !void {
-            self.sparse_set = std.ArrayList(?usize).init(component_allocator);
+        pub fn init(self: *Self) !void {
+            // self.sparse_set = std.ArrayList(?usize).init(component_allocator);
             self.packed_set = .{};
-            try self.sparse_set.resize(alloc_count);
+            // try self.sparse_set.resize(alloc_count);
 
             // initalize all new component indicies to null.
-            for (self.sparse_set.items) |*item| {
-                item.* = null;
-            }
+            // for (self.sparse_set.items) |*item| {
+            //     item.* = null;
+            // }
         }
 
         pub fn deinit(self: *Self) void {
-            self.*.sparse_set.deinit();
+            // self.*.sparse_set.deinit();
             self.*.packed_set.deinit(component_allocator);
-        }
-
-        // This will be called whenever space for a new entity should be made.
-        pub fn add_one(self: *Self) !void {
-            (try self.*.sparse_set.addOne()).* = null;
-        }
-
-        pub fn write_component(self: *Self, entity: Entity, data: ty) !void {
-            const entity_safe = entity orelse return ComponentStorageError.InvalidEntity;
-
-            // This means this entity doesn't have an Entity, error!
-            const component_index: usize = self.*.sparse_set.items[entity_safe] orelse return ComponentStorageError.EntityMissingComponent;
-
-            self.*.packed_set.set(component_index, data);
-        }
-
-        pub fn add_component(self: *Self, entity: Entity, data: ty) !void {
-            const entity_safe = entity orelse return ComponentStorageError.InvalidEntity;
-
-            const component_index: *?usize = &self.*.sparse_set.items[entity_safe];
-
-            // We can use == null becaues component_index is optional.
-            if (component_index.* == null) {
-                // If this entity doesn't have a component, add one!
-                try self.*.packed_set.append(component_allocator, data);
-            }
-
-            // Index into packed set that is where the new data lives.
-            const new_data_index = self.*.packed_set.len - 1;
-
-            self.*.sparse_set.items[entity_safe] = new_data_index;
-        }
-
-        pub fn remove_component(self: *Self, entity: Entity) !void {
-            const entity_safe = entity orelse return ComponentStorageError.InvalidEntity;
-            const component_index: *?usize = &self.*.sparse_set.items[entity_safe];
-
-            if (component_index.* == null) return ComponentStorageError.InvalidEntity;
-
-            // How this removal works, is that we move the last item in the packed set
-            // to replace the place of this component, and update the sparse set indices.
-            // Unless, of course, this component is the last, then it's easy.
-            if (component_index.*.? == self.*.packed_set.len - 1) {
-                component_index.*.? = 0;
-                return self.*.packed_set.resize(component_allocator, self.*.packed_set.len - 1);
-            }
-
-            // Ok, so we need to swap this component and the last component.
-            // Search for an index to the last component.
-            const last_index_sparse_ptr: *usize = for (self.*.sparse_set.items) |*index| {
-                if (index.* == self.*.packed_set.len - 1) {
-                    break &(index.*.?); // If it is equal to a number, it can't be null.
-                }
-            } else {
-                // This will happen whenever there is no sparse set entry that points to the
-                // last item in the packed set; it should never happen.
-                unreachable;
-            };
-
-            self.*.packed_set.swapRemove(component_index.*.?);
-            last_index_sparse_ptr.* = component_index.*.?;
-            component_index.* = null;
-        }
-
-        // Use this function as little as possible! It is way slower because we are using MultiArrayList.
-        pub fn get_component(self: *Self, entity: Entity) !?ty {
-            const entity_safe = entity orelse return ComponentStorageError.InvalidEntity;
-            const component_index: usize = self.*.sparse_set.items[entity_safe] orelse return null; // <-- returns null if this entity doesn't have this component.
-
-            return self.*.packed_set.get(component_index);
-        }
-
-        pub fn get_slice(self : *Self) std.MultiArrayList(ty).Slice {
-            return self.packed_set.slice();
         }
     };
 }
@@ -117,29 +41,50 @@ const ComponentStorageErased = struct {
 
     ptr: *anyopaque,
     deinit: *const fn (*Self) void,
-    add_one: *const fn (*Self) anyerror!void,
-    remove_component: *const fn (*Self, Entity) anyerror!void,
+    add_one: *const fn (*Self, anytype) anyerror!void,
+    len: *const fn(*Self) usize,
+    // remove_component: *const fn (*Self, Entity) anyerror!void,
+    make_new: *const fn (*Self, usize) anyerror!Self,
 
     pub fn init(comptime hidden_type: type, alloc_count: usize) !Self {
         const new_data = try component_allocator.create(ComponentStorage(hidden_type));
         try new_data.init(alloc_count);
-        return Self{ .ptr = new_data, .deinit = struct {
-            pub fn deinit(self: *Self) void {
-                var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
-                hidden.deinit();
-                component_allocator.destroy(hidden);
+        return Self{
+            .ptr = new_data,
+            .deinit = struct {
+                pub fn deinit(self: *Self) void {
+                    var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    hidden.deinit();
+                    component_allocator.destroy(hidden);
+                }
+            }.deinit,
+            .make_new = struct {
+                pub fn make_new(self: *Self, inner_alloc_count: usize) !Self {
+                    _ = self;
+                    return Self.init(hidden_type, inner_alloc_count);
+                }
+            }.make_new,
+
+            .add_one = struct {
+               pub fn add_one(self: *Self, data : anytype) !void {
+                   std.debug.assert( data == hidden_type);
+                   var hidden = self.cast(hidden_type);
+                   try hidden.*.packed_set.AddOne(data);
+               }
+            }.add_one,
+            .len = struct {
+                pub fn len(self : *Self) usize {
+                    var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    return hidden.*.packed_set.len;
+                }
             }
-        }.deinit, .add_one = struct {
-            pub fn add_one(self: *Self) !void {
-                var hidden = self.cast(hidden_type);
-                try hidden.add_one();
-            }
-        }.add_one, .remove_component = struct {
-            pub fn remove_component(self: *Self, ent: Entity) !void {
-                var hidden = self.cast(hidden_type);
-                return hidden.remove_component(ent);
-            }
-        }.remove_component };
+            // , .remove_component = struct {
+            //    pub fn remove_component(self: *Self, ent: Entity) !void {
+            //        var hidden = self.cast(hidden_type);
+            //        return hidden.remove_component(ent);
+            //    }
+            //}.remove_component
+        };
     }
 
     pub fn cast(self: *Self, comptime cast_to: type) *ComponentStorage(cast_to) {
@@ -147,76 +92,117 @@ const ComponentStorageErased = struct {
     }
 };
 
-
-const ECS = struct {
+const Archetype = struct {
+    const Self = @This();
     components: std.StringArrayHashMap(ComponentStorageErased),
+
+    pub fn init(components: [][]const u8, component_storages: []ComponentStorageErased) Self {
+        var self: Self = .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator) };
+        for (components, component_storages) |component_name, component_storage| {
+            self.components.put(component_name, component_storage);
+        }
+    }
+};
+
+const EntityInfo = struct { version: u32, archetype_idx: usize, packed_idx: usize };
+
+const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity };
+const ECS = struct {
+    entity_info: std.ArrayList(EntityInfo),
+    archetypes: std.ArrayList(Archetype),
     next_entity: usize = 0,
 
     const Self = @This();
     pub fn init() Self {
-        return Self{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator) };
+        return Self{ //.components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator),
+            .sparse_set = std.ArrayList(EntityInfo).init(component_allocator),
+            .archetypes = std.ArrayList(Archetype).init(component_allocator),
+        };
     }
     pub fn deinit(self: *Self) void {
-        for (self.*.components.values()) |*value| {
-            value.*.deinit(value);
-        }
+        //for (self.*.components.values()) |*value| {
+        //    value.*.deinit(value);
+        //}
+        self.*.archetypes.deinit();
         self.*.components.deinit();
+        self.*.sparse_set.deinit();
     }
 
     pub fn new_entity(self: *Self) !Entity {
         self.*.next_entity += 1;
 
         // Add a new component slot for every component type.
-        for (self.*.components.values()) |*value| {
-            try value.*.add_one(value);
-        }
-
+        //for (self.*.components.values()) |*value| {
+        //    try value.*.add_one(value);
+        //}
+        var new_info: *EntityInfo = self.*.entity_info.addOne();
+        // TODO: fix me.
+        _ = new_info;
         return self.*.next_entity - 1;
     }
 
-    pub fn add_component(self: *Self, entity: Entity, name: []const u8, comptime component: anytype) !void {
-        // Potentially register this component.
-        var query = try self.*.components.getOrPut(name); // TODO: try getOrPutValue
-        if (!query.found_existing) {
-            query.value_ptr.* = try ComponentStorageErased.init(@TypeOf(component), self.*.next_entity);
-        }
-        // We have a component storage now (maybe just registered it). Can use 'query.value_ptr.*' to use it.
+    pub fn add_component(self: *Self, entity: Entity, component_name: []const u8, comp_t: anytype) !void {
+        // Unwrap entity.
+        const safe_entity: usize = entity orelse return ECSError.InvalidEntity;
+        // Query the sparse set to see what archetype this entity is in (and its index).
+        const ent_info: EntityInfo = self.*.entity_info.items[safe_entity];
+        const arch: *Archetype = self.*.archetypes[ent_info.archetype_idx];
 
-        try query.value_ptr.cast(@TypeOf(component)).*.add_component(entity, component);
-    }
+        // These are the components that this entity currently has.
+        const arch_component_names: [][]const u8 = arch.*.components.keys();
 
-    pub fn get_component(self: *Self, entity: Entity, name: []const u8, comptime component_type: type) !?component_type {
-        var query = self.*.components.get(name);
-        if (query) |*res| {
-            // 'name' is a component type.
-            return res.*.cast(component_type).*.get_component(entity);
-        }
-        // TODO: Better errors!
-        unreachable;
-    }
+        // assert that component_name is not in arch_components.
+        std.debug.assert(for (arch_component_names) |component| {
+            if (std.mem.eql(u8, component == component_name)) {
+                break false;
+            }
+        } else {
+            true;
+        });
 
-    pub fn remove_component(self: *Self, entity: Entity, name: []const u8) !void {
-        var query = self.*.components.get(name);
-        if (query) |*value| {
-            return value.*.remove_component(value, entity);
-        }
-        // TODO: Better errors!
-        unreachable;
-    }
+        // Try to find an archetype that has arch_components and component_name.
+        var matching_arch: ?usize = outer: for (0.., self.*.archetypes) |arch_idx, *archetype| {
+            for (arch_component_names) |component| {
+                if (!archetype.*.components.contains(component)) {
+                    // This archetype does not match.
+                    continue :outer;
+                }
+            }
+            if (archetype.*.components.contains(component_name)) {
+                // This archetype matches! Use this one.
+                // This matches both the previous for loop and now this if statement.
+                break arch_idx;
+            }
+        } else {
+            null;
+        };
 
-    pub fn write_component(self: *Self, entity: Entity, name: []const u8, comptime component: anytype) !void {
-        var query = self.*.components.get(name);
-        if (query) |*value| {
-            return value.*.cast(@TypeOf(component)).*.write_component(entity, component);
-        }
-        unreachable;
-    }
+        // If there is no archetype that has the required components, make a new one that does!
+        if (matching_arch == null) {
+            // This means there are no archetypes that exist for this list of components; we must make one.
 
-    pub fn get_slice_of(self: *Self, name: []const u8, comptime component_type : type) std.MultiArrayList(component_type).Slice {
-        var query = self.*.components.get(name);
-        if (query) |*value| {
-            return value.*.cast(component_type).*.get_slice();
+            // Use the current archetype's ComponentStorageErased to create a new set of those components types
+            const old_arch_component_types: []ComponentStorageErased = arch.*.components.values();
+            const arch_component_types: []ComponentStorageErased = [arch_component_names.len + 1]ComponentStorageErased{};
+            // write to the new ComponentStorages
+            for (old_arch_component_types, arch_component_types) |*component_storage, *new_component_storage| {
+                new_component_storage.* = component_storage.make_new(self.*.next_entity);
+            }
+            arch_component_types[arch_component_names.len] = ComponentStorageErased.init(comp_t, self.*.next_entity);
+
+            var new_components = [][arch_component_names.len + 1]u8{0};
+            std.mem.copyForwards(u8, new_components[0..new_components.len], arch_component_names);
+            new_components[new_components.len - 1] = component_name;
+            // TODO: Create new_archetype(list of strings)
+
+            try self.archetypes.addOne(Archetype.init(new_components, arch_component_types));
+            matching_arch = self.archetypes.items.len - 1;
         }
+
+        const to_archetype : *Archetype = &self.*.archetypes[matching_arch.?];
+        to_archetype.components[component_name].add_one(comp_t);
+        self.*.archetypes[self.entity_info[safe_entity].?.archetype_idx]. # TODO
+        self.entity_info[safe_entity] = EntityInfo{.archetype_idx = matching_arch, .packed_idx = to_archetype.components[component_name].len()};
     }
 };
 
@@ -272,50 +258,39 @@ test "Writing Components" {
     const clutter_ent_2 = try world.new_entity();
     try world.add_component(clutter_ent_2, "name", Name{ .name = @constCast("Isabella") });
 
-    std.debug.assert(
-        std.mem.eql(
-            u8,
-            (try world.get_component(entity_1, "name", Name)).?.name,
-            @constCast("Jessica")
-    ));
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Jessica")));
 
-    try world.write_component(entity_1, "name", Name{.name = @constCast("Rose")});
+    try world.write_component(entity_1, "name", Name{ .name = @constCast("Rose") });
 
-    std.debug.assert(
-        std.mem.eql(
-            u8,
-            (try world.get_component(entity_1, "name", Name)).?.name,
-            @constCast("Rose")
-    ));
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Rose")));
 }
 
 test "Slicing Component" {
-    const Meatbag = struct {health : u32, armor : u32 };
-    const Vec2 = struct {x : f32, y: f32};
-    const Distance : *const fn(Vec2,Vec2) f32 = struct { pub fn d(pnt1 : Vec2, pnt2 : Vec2) f32 {
-        return std.math.sqrt( std.math.pow(f32, pnt1.x - pnt2.x, 2) + std.math.pow(f32, pnt1.y - pnt2.y, 2) );
-    }}.d;
+    const Meatbag = struct { health: u32, armor: u32 };
+    const Vec2 = struct { x: f32, y: f32 };
+    const Distance: *const fn (Vec2, Vec2) f32 = struct {
+        pub fn d(pnt1: Vec2, pnt2: Vec2) f32 {
+            return std.math.sqrt(std.math.pow(f32, pnt1.x - pnt2.x, 2) + std.math.pow(f32, pnt1.y - pnt2.y, 2));
+        }
+    }.d;
     _ = Distance;
-    const Transform = struct {position : Vec2 };
-    
+    const Transform = struct { position: Vec2 };
+
     var world = ECS.init();
     defer world.deinit();
 
     const entity_1 = try world.new_entity();
-    try world.add_component(entity_1, "meatbag", Meatbag{.health = 42, .armor = 4});
-    try world.add_component(entity_1, "transform", Transform{.position = .{.x=1,.y=1}} );
+    try world.add_component(entity_1, "meatbag", Meatbag{ .health = 42, .armor = 4 });
+    try world.add_component(entity_1, "transform", Transform{ .position = .{ .x = 1, .y = 1 } });
     const entity_2 = try world.new_entity();
-    try world.add_component(entity_2, "meatbag", Meatbag{.health = 99, .armor = 8});
-    try world.add_component(entity_2, "transform", Transform{.position = .{.x=-1,.y=-1}} );
+    try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
+    try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
 
-
-    var meatbag_slice = world.get_slice_of("meatbag",Meatbag);
+    var meatbag_slice = world.get_slice_of("meatbag", Meatbag);
     var transform_slice = world.get_slie_of("transform", Transform);
-    for(meatbag_slice.items(.health), meatbag_slice.items(.armor), transform_slice.items(.position)) |*health,armor,*position| {
+    for (meatbag_slice.items(.health), meatbag_slice.items(.armor), transform_slice.items(.position)) |*health, armor, *position| {
         _ = position;
         _ = armor;
         _ = health;
-        
     }
-
 }
