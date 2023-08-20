@@ -1,6 +1,10 @@
 const std = @import("std");
 const testing = std.testing;
 
+pub const std_options = struct {
+    pub const log_level = .debug;
+};
+
 // Is a unique id.
 const RawEntity = struct { entity_id: usize, version: usize };
 const Entity = ?RawEntity;
@@ -109,6 +113,15 @@ const Archetype = struct {
         return self;
     }
 
+    pub fn deinit(self: *Self) void {
+        var map_iter = self.*.components.iterator();
+        while (map_iter.next()) |item| {
+            var storage: *ComponentStorageErased = item.value_ptr;
+            storage.*.deinit(storage);
+        }
+        self.*.components.deinit();
+    }
+
     // This function will create a new 'Empty Archetype'
     pub fn init_empty() Self {
         return .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = 0 };
@@ -136,15 +149,18 @@ const ECS = struct {
     const Self = @This();
     pub fn init() !Self {
         var archetypes = std.ArrayList(Archetype).init(component_allocator);
-        try archetypes.append( Archetype.init_empty() );
+        try archetypes.append(Archetype.init_empty());
         return Self{ //.components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator),
             //.sparse_set = std.ArrayList(EntityInfo).init(component_allocator),
             .entity_info = std.ArrayList(EntityInfo).init(component_allocator),
-            .archetypes = archetypes, 
+            .archetypes = archetypes,
             .next_entity = 0,
         };
     }
     pub fn deinit(self: *Self) void {
+        for (self.*.archetypes.items) |*archetype| {
+            archetype.*.deinit();
+        }
         self.*.archetypes.deinit();
         self.*.entity_info.deinit();
         //self.*.components.deinit();
@@ -178,6 +194,8 @@ const ECS = struct {
     }
 
     // Move an entity from one archetype to another. Obviously, this can be dangerous.
+    // If the source archetype has no components, then nothing will be written to the destination archetype,
+    //  and you may need to update the packed set index if you add something again.
     fn move_entity(self: *Self, entity: Entity, from_index: usize, to_index: usize) !void {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
 
@@ -189,19 +207,35 @@ const ECS = struct {
         var to: *Archetype = &self.*.archetypes.items[to_index];
 
         var map_iter = from.*.components.iterator();
+        var last_component_storage: ?std.StringArrayHashMap(ComponentStorageErased).Entry = null;
         while (map_iter.next()) |item| {
             const key = item.key_ptr.*;
             const value: *ComponentStorageErased = item.value_ptr;
             // We can assume now that we will never come across the 'Emtpy Archetype' here.
             var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key).?;
+            last_component_storage = item;
 
             // This way we know where the last item of the 'from' archetype went.
             const entity_index: usize = self.*.entity_info.items[safe_entity].state.Alive.packed_idx.?;
 
-            try to_component_storage.*.take_from(to_component_storage,value, entity_index);
-            // We know that all of this data will be put at the end of to_component_storage.
-            // Now update the sparse set and stuff!
-            self.*.entity_info.items[safe_entity].state.Alive.archetype_idx = to_index;
+            try to_component_storage.*.take_from(to_component_storage, value, entity_index);
+        }
+        // All of the following steps could be in the above while loop, except that it would do the same thing many times.
+        // Instead, we'll find what it needs to do and do it once.
+
+        // We know that all of this data will be put at the end of to_component_storage.
+        // Now update the sparse set and stuff!
+        std.debug.print("Before archetype : {} | after archetype : {}\n", .{ self.*.entity_info.items[safe_entity].state.Alive.archetype_idx, to_index });
+        self.*.entity_info.items[safe_entity].state.Alive.archetype_idx = to_index;
+
+        // If the 'from' archetype has any components, then
+        if (last_component_storage) |item| {
+            std.debug.print("There was some components\n", .{});
+            const key = item.key_ptr.*;
+            // We can assume now that we will never come across the 'Emtpy Archetype' here.
+            var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key).?;
+            const entity_index: usize = self.*.entity_info.items[safe_entity].state.Alive.packed_idx.?;
+
             self.*.entity_info.items[safe_entity].state.Alive.packed_idx = to_component_storage.*.len(to_component_storage) - 1;
 
             // TODO: Get rid of this garbage. Store the entity information right next to each component.
@@ -219,7 +253,8 @@ const ECS = struct {
                     },
                 }
             } else { // This runs when 'break' is not hit.
-                unreachable;
+                // This will happen when there are no other entities left in this archetype.
+                //unreachable;
             }
         }
     }
@@ -267,15 +302,15 @@ const ECS = struct {
 
             // Use the current archetype's ComponentStorageErased to create a new set of those components types
             const old_arch_component_types: []ComponentStorageErased = arch.*.components.values();
-            const arch_component_types: []ComponentStorageErased = try component_allocator.alloc(ComponentStorageErased, arch_component_names.len + 1);//[arch_component_names.len + 1]ComponentStorageErased{};
+            const arch_component_types: []ComponentStorageErased = try component_allocator.alloc(ComponentStorageErased, arch_component_names.len + 1); //[arch_component_names.len + 1]ComponentStorageErased{};
             defer component_allocator.free(arch_component_types);
             // write to the new ComponentStorages
-            for (old_arch_component_types, arch_component_types[0..arch_component_types.len-1]) |*component_storage, *new_component_storage| {
+            for (old_arch_component_types, arch_component_types[0 .. arch_component_types.len - 1]) |*component_storage, *new_component_storage| {
                 new_component_storage.* = try component_storage.*.make_new(component_storage);
             }
-            arch_component_types[arch_component_names.len] = try ComponentStorageErased.init(@TypeOf(comp_t));// , self.*.next_entity
+            arch_component_types[arch_component_names.len] = try ComponentStorageErased.init(@TypeOf(comp_t)); // , self.*.next_entity
 
-            var new_components = try component_allocator.alloc([]const u8, arch_component_names.len + 1);//[][arch_component_names.len + 1]u8{0};
+            var new_components = try component_allocator.alloc([]const u8, arch_component_names.len + 1); //[][arch_component_names.len + 1]u8{0};
             defer component_allocator.free(new_components);
 
             std.mem.copyForwards([]const u8, new_components[0..new_components.len], arch_component_names);
@@ -287,34 +322,36 @@ const ECS = struct {
         std.debug.assert(matching_arch != null);
 
         const to_archetype: *Archetype = &self.*.archetypes.items[matching_arch.?];
-        _ = to_archetype;
 
         try self.move_entity(entity, ent_info.state.Alive.archetype_idx, matching_arch.?);
 
-        //// Add new component to the new component
-        //const getorput_result = to_archetype.components.getOrPut(component_name);
-        //std.debug.assert(getorput_result.found_existing == false);
-        //getorput_result.value_ptr.* = comp_t;
+        // Finally, add the new component.
+        var new_component_storage_erased: *ComponentStorageErased = to_archetype.*.components.getPtr(component_name).?;
+        var new_component_storage: *ComponentStorage(@TypeOf(comp_t)) = new_component_storage_erased.*.cast(@TypeOf(comp_t));
+        try new_component_storage.*.packed_set.append(component_allocator, comp_t);
 
-        // Add this entity to the new archetype.
-
-        // self.*.archetypes[self.entity_info[safe_entity].archetype_idx]. # TODO
-        // self.entity_info[safe_entity] = EntityInfo{.archetype_idx = matching_arch, .packed_idx = to_archetype.components[component_name].len()};
+        // Is the to_archetype the "Empty Archetype"?
+        if (ent_info.state.Alive.archetype_idx == 0) {
+            // If it is, update the packed set index to reflect it.
+            self.*.entity_info.items[safe_entity].state.Alive.packed_idx = new_component_storage.*.packed_set.len - 1;
+        }
     }
 
-    pub fn get_component(self : *Self, entity : Entity,  component_name : []const u8, comptime component_type : type) !?component_type {
+    pub fn get_component(self: *Self, entity: Entity, component_name: []const u8, comptime component_type: type) !?component_type {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
-        const arche_info : EntityArche = self.*.entity_info.items[safe_entity].state;
+        const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
+        std.debug.print("\nentity : {}\nversion : {}\narchetype index : {}\n", .{ safe_entity, entity.?.version, arche_info.Alive.archetype_idx });
+        std.debug.print("Archetype count : {}\n", .{self.*.archetypes.items.len});
 
         var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].components.iterator();
-        while(ahhh_iter.next()) |item| {
-            std.debug.print("{}\n",.{item.key_ptr});
+        while (ahhh_iter.next()) |item| {
+            std.debug.print("{}\n", .{item.key_ptr});
         }
-        std.debug.print("uhhh\n",.{});
+        std.debug.print("uhhh\n", .{});
 
-        var component_storage : *ComponentStorage(component_type) = self.*.archetypes.items[arche_info.Alive.archetype_idx].components.getPtr(component_name).?.*.cast(component_type);
+        var component_storage: *ComponentStorage(component_type) = self.*.archetypes.items[arche_info.Alive.archetype_idx].components.getPtr(component_name).?.*.cast(component_type);
         return component_storage.*.packed_set.get(safe_entity);
-    } 
+    }
 };
 
 test "ECS declaration" {
