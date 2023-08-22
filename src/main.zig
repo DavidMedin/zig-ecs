@@ -1,3 +1,10 @@
+// There are some problems with this Entity Component System (ECS).
+// The first thing to note is that archetypes are stored in an array that has holes.
+// When you delete archetypes, there is no reordering, but when you make new archetypes the ECS
+// will try to fill those holes. So, there can be wasted space when you go to every entity having
+// a unique set of components to every entity having the same components, the same components as the
+// last created unique entity thing. This isn't terrible though.
+
 const std = @import("std");
 const testing = std.testing;
 
@@ -59,13 +66,6 @@ const ComponentStorageErased = struct {
                 }
             }.make_new,
 
-            //.add_one = struct {
-            //   pub fn add_one(self: *Self, data : anytype) !void {
-            //       std.debug.assert( @TypeOf(data) == hidden_type);
-            //       var hidden = self.cast(hidden_type);
-            //       try hidden.*.packed_set.AddOne(data);
-            //   }
-            //}.add_one,
             .len = struct {
                 pub fn len(self: *Self) usize {
                     var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
@@ -103,10 +103,11 @@ const ComponentStorageErased = struct {
 const Archetype = struct {
     const Self = @This();
     components: std.StringArrayHashMap(ComponentStorageErased),
-    len: usize, // TODO: Implement this.
+    len: usize, // TODO: Test this
 
     pub fn init(components: [][]const u8, component_storages: []ComponentStorageErased) !Self {
-        var self: Self = .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = 0 };
+        std.debug.assert(components.len == component_storages.len);
+        var self: Self = .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = component_storages.len };
         for (components, component_storages) |component_name, component_storage| {
             try self.components.put(component_name, component_storage);
         }
@@ -126,6 +127,23 @@ const Archetype = struct {
     pub fn init_empty() Self {
         return .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = 0 };
     }
+
+    pub fn compare(self: *Self, compare_keys: [][]const u8) bool {
+        for (self.*.components.keys()) |keys| {
+            const was_found: bool = for (compare_keys) |compare_key| {
+                if (std.mem.eql(u8, compare_key, keys) == true) {
+                    break true;
+                }
+            } else inner: {
+                break :inner false;
+            };
+
+            if (was_found == false) {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 // This is information about the current entity. =====
@@ -140,31 +158,34 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 
 // =======================================================
 
-const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity };
+const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
 const ECS = struct {
     entity_info: std.ArrayList(EntityInfo),
-    archetypes: std.ArrayList(Archetype),
+
+    // Archetypes will be created and destroyed, however entities reference archetypes by index.
+    // So, they either need a layer of indirection (bad) or a clever non-congiuous thing (hard).
+    // We'll do the non-congiuous thing.
+    archetypes: std.ArrayList(?Archetype),
+    archetype_count: usize,
     next_entity: usize = 0,
 
     const Self = @This();
     pub fn init() !Self {
-        var archetypes = std.ArrayList(Archetype).init(component_allocator);
+        var archetypes = std.ArrayList(?Archetype).init(component_allocator);
         try archetypes.append(Archetype.init_empty());
-        return Self{ //.components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator),
-            //.sparse_set = std.ArrayList(EntityInfo).init(component_allocator),
+        return Self{
             .entity_info = std.ArrayList(EntityInfo).init(component_allocator),
             .archetypes = archetypes,
+            .archetype_count = 1,
             .next_entity = 0,
         };
     }
     pub fn deinit(self: *Self) void {
         for (self.*.archetypes.items) |*archetype| {
-            archetype.*.deinit();
+            archetype.*.?.deinit();
         }
         self.*.archetypes.deinit();
         self.*.entity_info.deinit();
-        //self.*.components.deinit();
-        //self.*.sparse_set.deinit();
     }
 
     pub fn new_entity(self: *Self) !Entity {
@@ -186,6 +207,11 @@ const ECS = struct {
         if (self.*.entity_info.items[safe_entity.entity_id].state == EntityArche.Dead) {
             return ECSError.DeadEntity;
         }
+
+        if (self.*.archetypes.items[self.*.entity_info.items[safe_entity.entity_id].state.Alive.archetype_idx] == null) {
+            unreachable; // This isn't a user error, so perhaps this shouldn't be an error.
+            // But, it might be important to tell zig that this code path shouldn't happen.
+        }
     }
 
     pub inline fn unwrap_entity(self: *Self, entity: Entity) !usize {
@@ -194,25 +220,28 @@ const ECS = struct {
     }
 
     // Move an entity from one archetype to another. Obviously, this can be dangerous.
+    // You can use this function to go to a bigger or smaller archetype. If it is bigger, you are responsible for adding the new component.
     // If the source archetype has no components, then nothing will be written to the destination archetype,
     //  and you may need to update the packed set index if you add something again.
     fn move_entity(self: *Self, entity: Entity, from_index: usize, to_index: usize) !void {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
 
-        // TODO: add asserts that garuntee that the 'to' archetype has at least the components from the 'from' archetype.
-
         // Incompletely remove component from entity.
         // This will only remove the component
-        var from: *Archetype = &self.*.archetypes.items[from_index];
-        var to: *Archetype = &self.*.archetypes.items[to_index];
+        var from: *Archetype = &self.*.archetypes.items[from_index].?;
+        var to: *Archetype = &self.*.archetypes.items[to_index].?;
 
+        // Assert that the two archetypes should be only one component away from each other.
+        std.debug.assert(try std.math.absInt(@as(i64, @intCast(from.*.len)) - @as(i64, @intCast(to.*.len))) == 1);
+        // TODO: Assert that all but one component must match.
+
+        // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.components.iterator();
         var last_component_storage: ?std.StringArrayHashMap(ComponentStorageErased).Entry = null;
         while (map_iter.next()) |item| {
             const key = item.key_ptr.*;
             const value: *ComponentStorageErased = item.value_ptr;
-            // We can assume now that we will never come across the 'Emtpy Archetype' here.
-            var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key).?;
+            var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key) orelse continue;
             last_component_storage = item;
 
             // This way we know where the last item of the 'from' archetype went.
@@ -228,7 +257,7 @@ const ECS = struct {
         std.debug.print("Before archetype : {} | after archetype : {}\n", .{ self.*.entity_info.items[safe_entity].state.Alive.archetype_idx, to_index });
         self.*.entity_info.items[safe_entity].state.Alive.archetype_idx = to_index;
 
-        // If the 'from' archetype has any components, then
+        // If the 'from' archetype has any components (and the 'to' archetype isn't 'Empty Archetype'), then
         if (last_component_storage) |item| {
             std.debug.print("There was some components\n", .{});
             const key = item.key_ptr.*;
@@ -265,7 +294,7 @@ const ECS = struct {
 
         // Query the sparse set to see what archetype this entity is in (and its index).
         const ent_info: EntityInfo = self.*.entity_info.items[safe_entity];
-        const arch: *Archetype = &self.*.archetypes.items[ent_info.state.Alive.archetype_idx];
+        const arch: *Archetype = &self.*.archetypes.items[ent_info.state.Alive.archetype_idx].?;
 
         // These are the components that this entity currently has.
         const arch_component_names: [][]const u8 = arch.*.components.keys();
@@ -280,7 +309,9 @@ const ECS = struct {
         });
 
         // Try to find an archetype that has arch_components and component_name.
-        var matching_arch: ?usize = outer: for (0.., self.*.archetypes.items) |arch_idx, *archetype| {
+        var matching_arch: ?usize = outer: for (0.., self.*.archetypes.items) |arch_idx, *archetype_opt| {
+            var archetype: *Archetype = &archetype_opt.*.?;
+
             for (arch_component_names) |component| {
                 if (!archetype.*.components.contains(component)) {
                     // This archetype does not match.
@@ -321,7 +352,7 @@ const ECS = struct {
         }
         std.debug.assert(matching_arch != null);
 
-        const to_archetype: *Archetype = &self.*.archetypes.items[matching_arch.?];
+        const to_archetype: *Archetype = &self.*.archetypes.items[matching_arch.?].?;
 
         try self.move_entity(entity, ent_info.state.Alive.archetype_idx, matching_arch.?);
 
@@ -343,14 +374,98 @@ const ECS = struct {
         std.debug.print("\nentity : {}\nversion : {}\narchetype index : {}\n", .{ safe_entity, entity.?.version, arche_info.Alive.archetype_idx });
         std.debug.print("Archetype count : {}\n", .{self.*.archetypes.items.len});
 
-        var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].components.iterator();
+        var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.iterator();
         while (ahhh_iter.next()) |item| {
             std.debug.print("{}\n", .{item.key_ptr});
         }
-        std.debug.print("uhhh\n", .{});
 
-        var component_storage: *ComponentStorage(component_type) = self.*.archetypes.items[arche_info.Alive.archetype_idx].components.getPtr(component_name).?.*.cast(component_type);
-        return component_storage.*.packed_set.get(safe_entity);
+        if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
+            var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
+            return component_storage.*.packed_set.get(safe_entity);
+        } else {
+            return null;
+        }
+    }
+
+    pub fn remove_component(self: *Self, entity: Entity, component_name: []const u8) !void {
+        const safe_entity: usize = try self.*.unwrap_entity(entity);
+        var entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
+
+        var current_archetype_idx = entity_info.*.state.Alive.archetype_idx;
+        var current_archetype: *Archetype = &self.*.archetypes.items[current_archetype_idx].?;
+
+        if (current_archetype.*.components.get(component_name) == null) {
+            return ECSError.EntityDoesNotHaveComponent;
+        }
+
+        if (current_archetype.*.len == 1) {
+            // Simply move this entity to the 'Empty Architecture'
+            try self.*.move_entity(entity, current_archetype_idx, 0);
+            // I don't think there is any cleanup.
+            entity_info.*.state.Alive.archetype_idx = 0;
+            entity_info.*.state.Alive.packed_idx = null;
+        } else {
+            // Make a new array of component names that will contain all of the names of the components
+            // this entity has *except* for 'component_name', as we are deleting that one.
+            var component_query: [][]const u8 = try component_allocator.alloc([]const u8, current_archetype.*.len - 1);
+            defer component_allocator.free(component_query);
+
+            const current_components: [][]const u8 = current_archetype.*.components.keys();
+            //Find where the component to be removed is in the current_components.
+            const removing_component: usize = for (0.., current_components) |index, component| {
+                //if (std.mem.orderZ(u8, component, component_name) == std.math.Order.eq) {
+                if (std.mem.eql(u8, component, component_name)) {
+                    break index;
+                }
+            } else {
+                unreachable;
+            };
+
+            @memcpy(component_query, current_components[0..removing_component]);
+            if (removing_component != current_archetype.len) { // I dunno what would happen if I didn't have this...
+                @memcpy(component_query[removing_component..], current_components[removing_component + 1 ..]);
+            }
+
+            // find an archetype that matches the 'component_query'. Then
+            for (0.., self.*.archetypes.items) |index, *item| {
+                var archetype: *Archetype = &item.*.?;
+                if (archetype.*.compare(component_query) == true) {
+                    // This archetype is the guy.
+                    try self.*.move_entity(entity, current_archetype_idx, index);
+                    break;
+                }
+            } else {
+                // There is no archetype that has this set of components, create a new one.
+                var component_storage: []ComponentStorageErased = try component_allocator.alloc(ComponentStorageErased, component_query.len);
+
+                // Use the component storages from the 'from' archetype to create the component storages we need for the 'to' archetype.
+                for (component_query, component_storage) |component, *item| {
+                    var component_storage_er: *ComponentStorageErased = current_archetype.*.components.getPtr(component).?;
+                    item.* = try component_storage_er.*.make_new(component_storage_er);
+                }
+
+                // TODO: make this fill holes rather than just append.
+                try self.*.archetypes.append(try Archetype.init(component_query, component_storage));
+                self.*.archetype_count += 1;
+
+                // Move entity.
+                try self.*.move_entity(entity, current_archetype_idx, self.*.archetype_count - 1);
+            }
+        }
+
+        // And, if the old archetype is now empty, kill it!
+        //if (current_archetype.*.components) {
+        //    self.*.archetypes.items[current_archetype_idx] = null;
+        //}
+    }
+
+    pub fn write_component(self: *Self, entity: Entity, component_name: []const u8, data: anytype) !void {
+        const safe_entity: usize = try self.*.unwrap_entity(entity);
+        var entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
+        var archetype: *Archetype = &(self.*.archetypes.items[entity_info.*.state.Alive.archetype_idx] orelse unreachable);
+        var component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name) orelse return ECSError.EntityDoesNotHaveComponent;
+        var component_storage: *ComponentStorage(@TypeOf(data)) = component_storage_erased.*.cast(@TypeOf(data));
+        component_storage.*.packed_set.set(entity_info.state.Alive.packed_idx.?, data);
     }
 };
 
@@ -373,45 +488,45 @@ test "ECS declaration" {
     std.debug.print("{}\n", .{player_comp});
 }
 
-// test "Remove Component" {
-//     const Name = struct { name: []u8 };
+test "Remove Component" {
+    const Name = struct { name: []u8 };
 
-//     var world = ECS.init();
-//     defer world.deinit();
+    var world = try ECS.init();
+    defer world.deinit();
 
-//     const entity_1 = try world.new_entity();
-//     try world.add_component(entity_1, "name", Name{ .name = @constCast("Jim") });
-//     const entity_2 = try world.new_entity();
-//     try world.add_component(entity_2, "name", Name{ .name = @constCast("Julia") });
-//     const entity_3 = try world.new_entity();
-//     try world.add_component(entity_3, "name", Name{ .name = @constCast("Alexa") });
+    const entity_1 = try world.new_entity();
+    try world.add_component(entity_1, "name", Name{ .name = @constCast("Jim") });
+    const entity_2 = try world.new_entity();
+    try world.add_component(entity_2, "name", Name{ .name = @constCast("Julia") });
+    const entity_3 = try world.new_entity();
+    try world.add_component(entity_3, "name", Name{ .name = @constCast("Alexa") });
 
-//     try world.remove_component(entity_1, "name");
-//     std.debug.assert((try world.get_component(entity_1, "name", Name)) == null);
-//     std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_2, "name", Name)).?.name, @constCast("Julia")));
-//     std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_3, "name", Name)).?.name, @constCast("Alexa")));
-// }
+    try world.remove_component(entity_1, "name");
+    std.debug.assert((try world.get_component(entity_1, "name", Name)) == null);
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_2, "name", Name)).?.name, @constCast("Julia")));
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_3, "name", Name)).?.name, @constCast("Alexa")));
+}
 
-// test "Writing Components" {
-//     const Name = struct { name: []u8 };
+test "Writing Components" {
+    const Name = struct { name: []u8 };
 
-//     var world = ECS.init();
-//     defer world.deinit();
+    var world = try ECS.init();
+    defer world.deinit();
 
-//     const clutter_ent_1 = try world.new_entity();
-//     try world.add_component(clutter_ent_1, "name", Name{ .name = @constCast("Aleric") });
+    const clutter_ent_1 = try world.new_entity();
+    try world.add_component(clutter_ent_1, "name", Name{ .name = @constCast("Aleric") });
 
-//     const entity_1 = try world.new_entity();
-//     try world.add_component(entity_1, "name", Name{ .name = @constCast("Jessica") });
-//     const clutter_ent_2 = try world.new_entity();
-//     try world.add_component(clutter_ent_2, "name", Name{ .name = @constCast("Isabella") });
+    const entity_1 = try world.new_entity();
+    try world.add_component(entity_1, "name", Name{ .name = @constCast("Jessica") });
+    const clutter_ent_2 = try world.new_entity();
+    try world.add_component(clutter_ent_2, "name", Name{ .name = @constCast("Isabella") });
 
-//     std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Jessica")));
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Jessica")));
 
-//     try world.write_component(entity_1, "name", Name{ .name = @constCast("Rose") });
+    try world.write_component(entity_1, "name", Name{ .name = @constCast("Rose") });
 
-//     std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Rose")));
-// }
+    std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Rose")));
+}
 
 // test "Slicing Component" {
 //     const Meatbag = struct { health: u32, armor: u32 };
