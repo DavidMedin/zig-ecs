@@ -144,6 +144,22 @@ const Archetype = struct {
         }
         return true;
     }
+
+    // Finds if this archetype contains *at least* these keys.
+    pub fn contains(self: *Self, has_keys: [][]const u8) bool {
+        for (has_keys) |could_key| {
+
+            // This for loop returns whether 'could_key' was in the
+            for (self.*.components.keys()) |key| {
+                if (std.mem.eql(u8, could_key, key) == true) {
+                    break;
+                }
+            } else {
+                return false;
+            }
+        }
+        return true;
+    }
 };
 
 // This is information about the current entity. =====
@@ -469,6 +485,129 @@ const ECS = struct {
     }
 };
 
+pub fn data_iter(comptime components: anytype) type {
+    const desc_type = @TypeOf(components); // Type of the input object.
+    const DescField = std.meta.FieldEnum(desc_type);
+    _ = DescField; // Enum type where each key is the field name.
+    const desc_type_info: std.builtin.Type = @typeInfo(desc_type); // Type information on the input type.
+    const struct_decl: std.builtin.Type.Struct = desc_type_info.Struct;
+
+    // These are the component names and component types the user has provided.
+    var field_names: [desc_type_info.Struct.fields.len][]const u8 = undefined;
+    comptime var field_types: [desc_type_info.Struct.fields.len]type = undefined;
+    
+    // the number of fields in each component.
+    var barray_map : [desc_type_info.Struct.fields.len]usize = undefined;
+    // ====================
+
+    // Go populate the above things.
+    inline for (0.., desc_type_info.Struct.fields) |index, field| {
+        field_names[index] = field.name;
+        const field_type: type = @field(components, field.name);
+        field_types[index] = field_type;
+        barray_map[index] = @typeInfo(field_type).Struct.fields.len; // Get the number of fields in this component.
+    }
+
+    const 
+
+    // searches field_names and field_types for an input string, and returns the coorisponding type from field_types.
+    const find_type = struct {
+        pub fn find_type(comptime field_names_inner: [][]const u8, comptime field_types_inner: []type, comptime type_name: []const u8) type {
+            for (field_names_inner, field_types_inner) |name, type_t| {
+                if (std.mem.eql(u8, name, type_name) == true) {
+                    return type_t;
+                }
+            }
+            unreachable;
+        }
+    }.find_type;
+    _ = find_type;
+
+    // This function takes a struct and returns a new struct where all of the members are pointer-ized.
+    const pointer_type = struct {
+        pub fn pointer_type(comptime in_struct: type) type {
+            const struct_info: std.builtin.Type.Struct = @typeInfo(in_struct).Struct;
+            var new_fields: [struct_info.fields.len]std.builtin.Type.StructField = undefined;
+            for (struct_info.fields, &new_fields) |field, *new_field| {
+                new_field.*.alignment = 0;
+                new_field.*.default_value = null;
+                new_field.*.is_comptime = false;
+                new_field.*.name = "PtrOf" ++ field.name;
+                new_field.*.type = @Type(.{
+                    .Pointer = .{
+                        .size = std.builtin.Type.Pointer.Size.One,
+                        .is_const = false,
+                        .is_volatile = false,
+                        .alignment = 8,
+                        .address_space = std.builtin.AddressSpace.generic,
+                        .child = field.type, // This is very important!
+                        .is_allowzero = false,
+                        .sentinel = null,
+                    },
+                });
+            }
+
+            return @Type(.{ .Struct = .{ .layout = std.builtin.Type.ContainerLayout.Auto, .fields = new_fields[0..], .decls = &[_]std.builtin.Type.Declaration{}, .is_tuple = false } });
+        }
+    }.pointer_type;
+
+    // This type describes one iteration of the slicing process.
+    // Each field is one of the component names, like .meatbag, .transform, or such.
+    // Within each of those is all of the fields of the component, except a pointer to it.
+    var fields: [struct_decl.fields.len]std.builtin.Type.StructField = undefined;
+    for (&fields, field_names, field_types) |*field, field_name, field_type| {
+        field.*.name = field_name;
+        field.*.type = pointer_type(field_type);
+        field.*.alignment = 0;
+        field.*.is_comptime = false;
+        field.*.default_value = null;
+    }
+    const slice_type = @Type(.{ .Struct = .{ .layout = .Auto, .fields = fields[0..], .decls = &[_]std.builtin.Type.Declaration{}, .is_tuple = false } });
+
+    const baked_names: [desc_type_info.Struct.fields.len][]const u8 = field_names;
+
+    return struct {
+        archetype_idx: ?usize,
+        packed_idx: ?usize,
+        ecs: *ECS,
+        slices: funny_type,
+        pub fn init(ecs: *ECS) @This() {
+            const first_archetype: ?usize = for (0.., ecs.*.archetypes.items) |index, *archetype_maybe| {
+                var archetype: *Archetype = &(archetype_maybe.* orelse continue);
+                if (archetype.*.contains(@constCast(baked_names[0..]))) {
+                    break index;
+                }
+            } else inner: {
+                break :inner null;
+            };usize
+
+            return .{ .archetype_idx = first_archetype, .packed_idx = null, .ecs = ecs };
+        }
+
+        pub fn next(self: *@This()) ?slice_type {
+            if (self.*.archetype_idx == null) return null;
+            const safe_archetype_idx: usize = self.*.archetype_idx.?;
+            _ = safe_archetype_idx;
+
+            if (self.*.packed_idx == null) {
+                // This means that we need to find the first packed_idx, and use it.
+                //var archetype: *Archetype = self.*.ecs.*.archetypes.items[safe_archetype_idx].?;
+                //_ = archetype;
+                //archetype.*.components.getPtr()
+                //self.*.slices = items akdlkjs;
+                for(fields in self.*.slices) | fields|{ 
+                    for(fields in fields) |thing| {
+
+                    }
+                }
+            }
+            
+            iterate it yo
+            return null;
+        }
+    };
+}
+
 test "ECS declaration" {
     const meatbag = struct { health: u32, something_else: i64 };
     const vec2 = struct { x: f32, y: f32 };
@@ -528,32 +667,44 @@ test "Writing Components" {
     std.debug.assert(std.mem.eql(u8, (try world.get_component(entity_1, "name", Name)).?.name, @constCast("Rose")));
 }
 
-// test "Slicing Component" {
-//     const Meatbag = struct { health: u32, armor: u32 };
-//     const Vec2 = struct { x: f32, y: f32 };
-//     const Distance: *const fn (Vec2, Vec2) f32 = struct {
-//         pub fn d(pnt1: Vec2, pnt2: Vec2) f32 {
-//             return std.math.sqrt(std.math.pow(f32, pnt1.x - pnt2.x, 2) + std.math.pow(f32, pnt1.y - pnt2.y, 2));
-//         }
-//     }.d;
-//     _ = Distance;
-//     const Transform = struct { position: Vec2 };
+test "Slicing Component" {
+    const Meatbag = struct { health: u32, armor: u32 };
+    const Vec2 = struct { x: f32, y: f32 };
+    const Distance: *const fn (Vec2, Vec2) f32 = struct {
+        pub fn d(pnt1: Vec2, pnt2: Vec2) f32 {
+            return std.math.sqrt(std.math.pow(f32, pnt1.x - pnt2.x, 2) + std.math.pow(f32, pnt1.y - pnt2.y, 2));
+        }
+    }.d;
+    _ = Distance;
+    const Transform = struct { position: Vec2 };
 
-//     var world = ECS.init();
-//     defer world.deinit();
+    var world = try ECS.init();
+    defer world.deinit();
 
-//     const entity_1 = try world.new_entity();
-//     try world.add_component(entity_1, "meatbag", Meatbag{ .health = 42, .armor = 4 });
-//     try world.add_component(entity_1, "transform", Transform{ .position = .{ .x = 1, .y = 1 } });
-//     const entity_2 = try world.new_entity();
-//     try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
-//     try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
+    const entity_1 = try world.new_entity();
+    try world.add_component(entity_1, "meatbag", Meatbag{ .health = 42, .armor = 4 });
+    try world.add_component(entity_1, "transform", Transform{ .position = .{ .x = 1, .y = 1 } });
+    const entity_2 = try world.new_entity();
+    try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
+    try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
 
-//     var meatbag_slice = world.get_slice_of("meatbag", Meatbag);
-//     var transform_slice = world.get_slie_of("transform", Transform);
-//     for (meatbag_slice.items(.health), meatbag_slice.items(.armor), transform_slice.items(.position)) |*health, armor, *position| {
-//         _ = position;
-//         _ = armor;
-//         _ = health;
-//     }
-// }
+    //var iter = DataIter()
+    //    .over(.meatbag, Meatbag, .{.health})
+    //    .over(.transform, Transform, .{.position})
+    //    .init(&world);
+    var iter = data_iter(.{ .meatbag = Meatbag, .transform = Transform }).init(&world);
+
+    var slice = iter.next();
+    _ = slice;
+    //std.debug.print("{s}", .{std.fmt.comptimePrint("{s}\n", @typeName(@TypeOf(slice)))});
+    // std.debug.print("{s}\n", .{std.fmt.comptimePrint("{}", .{@typeInfo(@typeInfo(@TypeOf(slice)).Optional.child)})});
+    // inline for (@typeInfo(@typeInfo(@TypeOf(slice)).Optional.child).Struct.fields) |field| {
+    //     std.debug.print("{s}\n", .{std.fmt.comptimePrint("{}", .{field})});
+    // }
+
+    //while (iter.next()) |slice| {
+    //    std.debug.print("{s}", .{std.fmt.comptimePrint("{s}\n", @typeName(@TypeOf(slice)))});
+    //    //std.debug.print("{}", .{std.fmt.comptimePrint("{}\n", @typeInfo(@TypeOf(slice)))});
+    //    //const health: *u32 = slice.meatbag.health;
+    //}
+}
