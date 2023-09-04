@@ -45,6 +45,7 @@ const ComponentStorageErased = struct {
     // remove_component: *const fn (*Self, Entity) anyerror!void,
     make_new: *const fn (*Self) anyerror!Self,
     take_from: *const fn (*Self, *ComponentStorageErased, usize) anyerror!void,
+    get_field_ptr: *const fn (*Self, []const u8) anyerror!*anyopaque,
 
     pub fn init(comptime hidden_type: type) !Self {
         const new_data = try component_allocator.create(ComponentStorage(hidden_type));
@@ -88,6 +89,13 @@ const ComponentStorageErased = struct {
                     try hidden_self.*.packed_set.append(component_allocator, moving_value);
                 }
             }.take_from,
+            .get_field_ptr = struct {
+                pub fn get_field_ptr(self: *Self, name: []const u8) anyerror!*anyopaque {
+                    var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    const component_member_field = @field(std.MultiArrayList(hidden_type).Field, name);
+                    return hidden.*.packed_set.items(component_member_field).ptr;
+                }
+            }.get_field_ptr,
         };
     }
 
@@ -495,9 +503,9 @@ pub fn data_iter(comptime components: anytype) type {
     // These are the component names and component types the user has provided.
     var field_names: [desc_type_info.Struct.fields.len][]const u8 = undefined;
     comptime var field_types: [desc_type_info.Struct.fields.len]type = undefined;
-    
+
     // the number of fields in each component.
-    var barray_map : [desc_type_info.Struct.fields.len]usize = undefined;
+    var barray_map: [desc_type_info.Struct.fields.len]usize = undefined;
     // ====================
 
     // Go populate the above things.
@@ -507,8 +515,6 @@ pub fn data_iter(comptime components: anytype) type {
         field_types[index] = field_type;
         barray_map[index] = @typeInfo(field_type).Struct.fields.len; // Get the number of fields in this component.
     }
-
-    const 
 
     // searches field_names and field_types for an input string, and returns the coorisponding type from field_types.
     const find_type = struct {
@@ -521,7 +527,6 @@ pub fn data_iter(comptime components: anytype) type {
             unreachable;
         }
     }.find_type;
-    _ = find_type;
 
     // This function takes a struct and returns a new struct where all of the members are pointer-ized.
     const pointer_type = struct {
@@ -564,13 +569,16 @@ pub fn data_iter(comptime components: anytype) type {
     }
     const slice_type = @Type(.{ .Struct = .{ .layout = .Auto, .fields = fields[0..], .decls = &[_]std.builtin.Type.Declaration{}, .is_tuple = false } });
 
+    const slice_type_info: std.builtin.Type.Struct = @typeInfo(slice_type).Struct;
+
     const baked_names: [desc_type_info.Struct.fields.len][]const u8 = field_names;
 
     return struct {
         archetype_idx: ?usize,
         packed_idx: ?usize,
         ecs: *ECS,
-        slices: funny_type,
+        slice: slice_type,
+        // an array of member offsets from slice's start.
         pub fn init(ecs: *ECS) @This() {
             const first_archetype: ?usize = for (0.., ecs.*.archetypes.items) |index, *archetype_maybe| {
                 var archetype: *Archetype = &(archetype_maybe.* orelse continue);
@@ -579,30 +587,81 @@ pub fn data_iter(comptime components: anytype) type {
                 }
             } else inner: {
                 break :inner null;
-            };usize
+            };
 
-            return .{ .archetype_idx = first_archetype, .packed_idx = null, .ecs = ecs };
+            return .{ .archetype_idx = first_archetype, .packed_idx = null, .ecs = ecs, .slice = undefined };
         }
 
         pub fn next(self: *@This()) ?slice_type {
             if (self.*.archetype_idx == null) return null;
             const safe_archetype_idx: usize = self.*.archetype_idx.?;
-            _ = safe_archetype_idx;
+            var archetype: *Archetype = &self.*.ecs.*.archetypes.items[safe_archetype_idx].?;
 
             if (self.*.packed_idx == null) {
-                // This means that we need to find the first packed_idx, and use it.
-                //var archetype: *Archetype = self.*.ecs.*.archetypes.items[safe_archetype_idx].?;
-                //_ = archetype;
-                //archetype.*.components.getPtr()
-                //self.*.slices = items akdlkjs;
-                for(fields in self.*.slices) | fields|{ 
-                    for(fields in fields) |thing| {
+                //TODO: if this archetype does not have any component (assert, this shouldn't happen) then iterate to the next archetype.
 
+                // This huge for loop will get the sum of the component's fields.
+                comptime var member_counter: usize = 0;
+                inline for (slice_type_info.fields) |field| {
+                    //fields.name
+                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(field.name).?;
+                    const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
+                    var component_storage: *ComponentStorage(field_type) = component_storage_erased.cast(field_type);
+                    std.debug.assert(component_storage.*.packed_set.len > 0);
+                    // Iterate through all the fields of this component.
+                    const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
+                    var slice_for_component: *pointer_type(field_type) = &@field(self.*.slice, field.name);
+                    _ = slice_for_component;
+                    inline for (component_type_info.fields) |component_field| {
+                        _ = component_field;
+                        member_counter += 1;
+                        // const pointer_thing: []*field_type = component_storage.*.packed_set.items(@field(component_storage.*.packed_set.Field, component_field.name));
+                        // slice_for_component.* = pointer_thing.ptr;
                     }
                 }
+
+                // This for loop will populate these arrays with the information.
+                var wuh_component_storage: [member_counter]*ComponentStorageErased = undefined;
+                // comptime var wuh_types: [member_counter]type = undefined;
+                comptime var wuh_names: [member_counter][]const u8 = undefined;
+                comptime var counter: usize = 0;
+                inline for (slice_type_info.fields) |field| {
+                    //fields.name
+                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(field.name).?;
+                    const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
+                    var component_storage: *ComponentStorage(field_type) = component_storage_erased.cast(field_type);
+                    std.debug.assert(component_storage.*.packed_set.len > 0);
+                    // Iterate through all the fields of this component.
+                    const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
+                    var slice_for_component: *pointer_type(field_type) = &@field(self.*.slice, field.name);
+                    _ = slice_for_component;
+                    inline for (component_type_info.fields) |component_field| {
+                        wuh_component_storage[counter] = component_storage_erased;
+                        // wuh_types[counter] = field_type;
+                        wuh_names[counter] = component_field.name;
+                        counter += 1;
+                        // const pointer_thing: []*field_type = component_storage.*.packed_set.items(@field(component_storage.*.packed_set.Field, component_field.name));
+                        // slice_for_component.* = pointer_thing.ptr;
+                    }
+                }
+
+                comptime var i: usize = 0;
+                inline while (i < member_counter) {
+                    // const ahhh: *const fn (*ComponentStorageErased, []const u8) anyerror!*anyopaque = wuh_component_storage[i].get_field_ptr;
+                    // var component_storage: *ComponentStorage(wuh_types[i]) = wuh_component_storage[i].cast(wuh_types[i]);
+                    // _ = component_storage;
+
+                    i += 1;
+                }
+                // for (wuh_component_storage, wuh_types, wuh_names) |component_storage_erased, comp_t, name| {
+                //     _ = name;
+                //     _ = comp_t;
+                //     _ = component_storage_erased;
+                // }
+
+                // go through all the members of 'slice', and all of those members, and set it to the thing.
             }
-            
-            iterate it yo
+
             return null;
         }
     };
