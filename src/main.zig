@@ -1,9 +1,19 @@
+// Author : David Medin
+// Email : david@davidmedin.com
+// Zig Version : 0.11.0-dev.3936+8ae92fd17
+
 // There are some problems with this Entity Component System (ECS).
-// The first thing to note is that archetypes are stored in an array that has holes.
-// When you delete archetypes, there is no reordering, but when you make new archetypes the ECS
-// will try to fill those holes. So, there can be wasted space when you go to every entity having
-// a unique set of components to every entity having the same components, the same components as the
-// last created unique entity thing. This isn't terrible though.
+// The main problem right now is that it is too dificult to write the iterator due to limitations with the zig compile time code.
+// I don't know if I'm just stupid, but I can't generate some runtime code using compiletime types and such. ugh.
+// This mostly comes from the fact that I'm using a `std.MultiArrayList` in the ComponentStorage, meaning that you can't 'just' get
+// a pointer to a component instance. So making an iteration slice requires the dark arts of on-the-fly type generation, type crawling
+// and spooky comptime-time anonymous functions.
+// To remedy this, I will no longer use the std.multiarraylist, instead use a simple std.arraylist, reducing the length of this file by
+// like half. It will make it more possible to make iteration code too, since I can then have a function in the ComponentStorageErased that
+// can return the pointer to the beginning of its std.arraylist without requiring compiletime information like member name, which is a huge pain.
+// AHHHHGHGHG!
+// Maybe I'll try to reimpliment MultiArrayList later down the line, becuase it might speed code up and reduce memory usage, but I don't
+// care right now. I just wanna make games yo!
 
 const std = @import("std");
 const testing = std.testing;
@@ -45,7 +55,7 @@ const ComponentStorageErased = struct {
     // remove_component: *const fn (*Self, Entity) anyerror!void,
     make_new: *const fn (*Self) anyerror!Self,
     take_from: *const fn (*Self, *ComponentStorageErased, usize) anyerror!void,
-    get_field_ptr: *const fn (*Self, []const u8) anyerror!*anyopaque,
+    // get_field_ptr: *const fn (*Self, []const u8) anyerror!*anyopaque,
 
     pub fn init(comptime hidden_type: type) !Self {
         const new_data = try component_allocator.create(ComponentStorage(hidden_type));
@@ -89,13 +99,13 @@ const ComponentStorageErased = struct {
                     try hidden_self.*.packed_set.append(component_allocator, moving_value);
                 }
             }.take_from,
-            .get_field_ptr = struct {
-                pub fn get_field_ptr(self: *Self, name: []const u8) anyerror!*anyopaque {
-                    var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
-                    const component_member_field = @field(std.MultiArrayList(hidden_type).Field, name);
-                    return hidden.*.packed_set.items(component_member_field).ptr;
-                }
-            }.get_field_ptr,
+            // .get_field_ptr = struct {
+            //     pub fn get_field_ptr(self: *Self, name: []const u8) anyerror!*anyopaque {
+            //         var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+            //         const component_member_field = @field(std.MultiArrayList(hidden_type).Field, name);
+            //         return hidden.*.packed_set.items(component_member_field).ptr;
+            //     }
+            // }.get_field_ptr,
         };
     }
 
@@ -495,21 +505,18 @@ const ECS = struct {
 
 pub fn data_iter(comptime components: anytype) type {
     const desc_type = @TypeOf(components); // Type of the input object.
-    const DescField = std.meta.FieldEnum(desc_type);
-    _ = DescField; // Enum type where each key is the field name.
-    const desc_type_info: std.builtin.Type = @typeInfo(desc_type); // Type information on the input type.
-    const struct_decl: std.builtin.Type.Struct = desc_type_info.Struct;
+    const desc_type_info: std.builtin.Type.Struct = @typeInfo(desc_type).Struct; // Type information on the input type.
 
     // These are the component names and component types the user has provided.
-    var field_names: [desc_type_info.Struct.fields.len][]const u8 = undefined;
-    comptime var field_types: [desc_type_info.Struct.fields.len]type = undefined;
+    var field_names: [desc_type_info.fields.len][]const u8 = undefined;
+    comptime var field_types: [desc_type_info.fields.len]type = undefined;
 
     // the number of fields in each component.
-    var barray_map: [desc_type_info.Struct.fields.len]usize = undefined;
+    var barray_map: [desc_type_info.fields.len]usize = undefined;
     // ====================
 
     // Go populate the above things.
-    inline for (0.., desc_type_info.Struct.fields) |index, field| {
+    inline for (0.., desc_type_info.fields) |index, field| {
         field_names[index] = field.name;
         const field_type: type = @field(components, field.name);
         field_types[index] = field_type;
@@ -537,7 +544,7 @@ pub fn data_iter(comptime components: anytype) type {
                 new_field.*.alignment = 0;
                 new_field.*.default_value = null;
                 new_field.*.is_comptime = false;
-                new_field.*.name = "PtrOf" ++ field.name;
+                new_field.*.name = field.name;
                 new_field.*.type = @Type(.{
                     .Pointer = .{
                         .size = std.builtin.Type.Pointer.Size.One,
@@ -559,7 +566,7 @@ pub fn data_iter(comptime components: anytype) type {
     // This type describes one iteration of the slicing process.
     // Each field is one of the component names, like .meatbag, .transform, or such.
     // Within each of those is all of the fields of the component, except a pointer to it.
-    var fields: [struct_decl.fields.len]std.builtin.Type.StructField = undefined;
+    var fields: [desc_type_info.fields.len]std.builtin.Type.StructField = undefined;
     for (&fields, field_names, field_types) |*field, field_name, field_type| {
         field.*.name = field_name;
         field.*.type = pointer_type(field_type);
@@ -571,13 +578,62 @@ pub fn data_iter(comptime components: anytype) type {
 
     const slice_type_info: std.builtin.Type.Struct = @typeInfo(slice_type).Struct;
 
-    const baked_names: [desc_type_info.Struct.fields.len][]const u8 = field_names;
+    const baked_names: [desc_type_info.fields.len][]const u8 = field_names;
+
+    // // This huge for loop will get the sum of the component's fields.
+    // comptime var member_counter: usize = 0;
+    // inline for (slice_type_info.fields) |field| {
+    //     const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
+    //     // Iterate through all the fields of this component.
+    //     const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
+    //     inline for (component_type_info.fields) |_| {
+    //         member_counter += 1;
+    //     }
+    // }
+
+    // var slice_member_offsets: [member_counter]usize = undefined;
+    // var counter = 0;
+    // inline for (slice_type_info.fields) |field| {
+    //     const field_offset = @offsetOf(slice_type, field.name);
+
+    //     const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
+    //     const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
+    //     // var slice_for_component: *pointer_type(field_type) = &@field(dummy_slice, field.name);
+    //     inline for (component_type_info.fields) |component_field| {
+    //         slice_member_offsets[counter] = field_offset + @offsetOf(field.type, component_field.name);
+    //         // wuh_component_storage[counter] = component_storage_erased;
+    //         // wuh_names[counter] = component_field.name;
+    //         counter += 1;
+    //     }
+    // }
+
+    const init_slice = struct {
+        pub fn init_slice(archetype: *Archetype, slice_ptr: *slice_type) void {
+            inline for (slice_type_info.fields) |field| {
+                //fields.name
+                const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(field.name).?;
+                const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
+                var component_storage: *ComponentStorage(field_type) = component_storage_erased.cast(field_type);
+                std.debug.assert(component_storage.*.packed_set.len > 0);
+                // Iterate through all the fields of this component.
+                const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
+                var slice_for_component: *pointer_type(field_type) = &@field(slice_ptr.*, field.name);
+                inline for (component_type_info.fields) |component_field| {
+                    const pointer_thing: []*field_type = component_storage.*.packed_set.items(@field(component_storage.*.packed_set.Field, component_field.name));
+                    slice_for_component.* = pointer_thing.ptr;
+                }
+            }
+        }
+    }.init_slice;
+
+    // Iterate through slice_type, storing offsets.
 
     return struct {
         archetype_idx: ?usize,
         packed_idx: ?usize,
         ecs: *ECS,
         slice: slice_type,
+        // slice_ptrs: [member_counter]*anyopaque,
         // an array of member offsets from slice's start.
         pub fn init(ecs: *ECS) @This() {
             const first_archetype: ?usize = for (0.., ecs.*.archetypes.items) |index, *archetype_maybe| {
@@ -599,68 +655,20 @@ pub fn data_iter(comptime components: anytype) type {
 
             if (self.*.packed_idx == null) {
                 //TODO: if this archetype does not have any component (assert, this shouldn't happen) then iterate to the next archetype.
-
-                // This huge for loop will get the sum of the component's fields.
-                comptime var member_counter: usize = 0;
-                inline for (slice_type_info.fields) |field| {
-                    //fields.name
-                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(field.name).?;
-                    const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
-                    var component_storage: *ComponentStorage(field_type) = component_storage_erased.cast(field_type);
-                    std.debug.assert(component_storage.*.packed_set.len > 0);
-                    // Iterate through all the fields of this component.
-                    const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
-                    var slice_for_component: *pointer_type(field_type) = &@field(self.*.slice, field.name);
-                    _ = slice_for_component;
-                    inline for (component_type_info.fields) |component_field| {
-                        _ = component_field;
-                        member_counter += 1;
-                        // const pointer_thing: []*field_type = component_storage.*.packed_set.items(@field(component_storage.*.packed_set.Field, component_field.name));
-                        // slice_for_component.* = pointer_thing.ptr;
-                    }
-                }
-
-                // This for loop will populate these arrays with the information.
-                var wuh_component_storage: [member_counter]*ComponentStorageErased = undefined;
-                // comptime var wuh_types: [member_counter]type = undefined;
-                comptime var wuh_names: [member_counter][]const u8 = undefined;
-                comptime var counter: usize = 0;
-                inline for (slice_type_info.fields) |field| {
-                    //fields.name
-                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(field.name).?;
-                    const field_type: type = find_type(@constCast(baked_names[0..]), @constCast(field_types[0..]), field.name);
-                    var component_storage: *ComponentStorage(field_type) = component_storage_erased.cast(field_type);
-                    std.debug.assert(component_storage.*.packed_set.len > 0);
-                    // Iterate through all the fields of this component.
-                    const component_type_info: std.builtin.Type.Struct = @typeInfo(field_type).Struct;
-                    var slice_for_component: *pointer_type(field_type) = &@field(self.*.slice, field.name);
-                    _ = slice_for_component;
-                    inline for (component_type_info.fields) |component_field| {
-                        wuh_component_storage[counter] = component_storage_erased;
-                        // wuh_types[counter] = field_type;
-                        wuh_names[counter] = component_field.name;
-                        counter += 1;
-                        // const pointer_thing: []*field_type = component_storage.*.packed_set.items(@field(component_storage.*.packed_set.Field, component_field.name));
-                        // slice_for_component.* = pointer_thing.ptr;
-                    }
-                }
-
-                comptime var i: usize = 0;
-                inline while (i < member_counter) {
-                    // const ahhh: *const fn (*ComponentStorageErased, []const u8) anyerror!*anyopaque = wuh_component_storage[i].get_field_ptr;
-                    // var component_storage: *ComponentStorage(wuh_types[i]) = wuh_component_storage[i].cast(wuh_types[i]);
-                    // _ = component_storage;
-
-                    i += 1;
-                }
-                // for (wuh_component_storage, wuh_types, wuh_names) |component_storage_erased, comp_t, name| {
-                //     _ = name;
-                //     _ = comp_t;
-                //     _ = component_storage_erased;
-                // }
-
-                // go through all the members of 'slice', and all of those members, and set it to the thing.
+                init_slice(archetype, &self.*.slice);
             }
+            // comptime var i: usize = 0;
+            // inline while (i < member_counter) {
+            //     i += 1;
+            // }
+            // for (wuh_component_storage, wuh_types, wuh_names) |component_storage_erased, comp_t, name| {
+            //     _ = name;
+            //     _ = comp_t;
+            //     _ = component_storage_erased;
+            // }
+
+            // go through all the members of 'slice', and all of those members, and set it to the thing.
+            // }
 
             return null;
         }
