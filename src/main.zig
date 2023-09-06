@@ -447,7 +447,7 @@ const ECS = struct {
 
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
             var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
-            return &component_storage.*.packed_set.items[safe_entity];
+            return &component_storage.*.packed_set.items[arche_info.Alive.packed_idx.?];
         } else {
             return null;
         }
@@ -748,6 +748,44 @@ test "ECS declaration" {
     std.debug.print("{}\n", .{player_comp});
 }
 
+test "Complex Archetypes" {
+    const meatbag = struct { health: u32, something_else: i64 };
+    const vec2 = struct { x: f32, y: f32 };
+    const transform = struct { position: vec2, rotation: f32, velocity: vec2 };
+    const type2 = struct { member_1: i32 };
+    const type3 = struct { member_1: f32 };
+    var world = try ECS.init();
+    defer world.deinit();
+
+    const ent1 = try world.new_entity();
+    try world.add_component(ent1, "meatbag", meatbag{ .health = 2, .something_else = 123 });
+    try world.add_component(ent1, "transform", transform{ .position = .{ .x = 2, .y = 1 }, .rotation = 42.3, .velocity = .{ .x = 0, .y = 0 } });
+
+    const ent2 = try world.new_entity();
+    try world.add_component(ent2, "type2", type2{ .member_1 = 3 });
+    try world.add_component(ent2, "type3", type3{ .member_1 = 3.3 });
+
+    const ent3 = try world.new_entity(); // in the same archetype as ent1
+    try world.add_component(ent3, "meatbag", meatbag{ .health = 10, .something_else = 123 });
+    try world.add_component(ent3, "transform", transform{ .position = .{ .x = 4, .y = 1 }, .rotation = 42.3, .velocity = .{ .x = 0, .y = 1 } });
+
+    const ent4 = try world.new_entity();
+    try world.add_component(ent4, "type2", type2{ .member_1 = 3 });
+    try world.add_component(ent4, "type3", type3{ .member_1 = 3.3 });
+    try world.add_component(ent4, "transform", transform{ .position = .{ .x = 4, .y = 10 }, .rotation = 42.3, .velocity = .{ .x = 0, .y = 1 } });
+
+    var player_comp: meatbag = (try world.get_component(ent1, "meatbag", meatbag)).?.*;
+    _ = player_comp;
+    _ = (try world.get_component(ent1, "transform", transform)).?.*;
+    _ = (try world.get_component(ent2, "type2", type2)).?.*;
+    _ = (try world.get_component(ent2, "type3", type3)).?.*;
+    _ = (try world.get_component(ent3, "meatbag", meatbag)).?.*;
+    _ = (try world.get_component(ent3, "transform", transform)).?.*;
+    _ = (try world.get_component(ent4, "type2", type2)).?.*;
+    _ = (try world.get_component(ent4, "type3", type3)).?.*;
+    _ = (try world.get_component(ent4, "transform", transform)).?.*;
+}
+
 test "Remove Component" {
     const Name = struct { name: []u8 };
 
@@ -798,6 +836,7 @@ test "Slicing Component" {
     }.d;
     _ = Distance;
     const Transform = struct { position: Vec2 };
+    const MoreData = struct { x: f32, ads: usize };
 
     var world = try ECS.init();
     defer world.deinit();
@@ -805,14 +844,14 @@ test "Slicing Component" {
     const entity_1 = try world.new_entity();
     try world.add_component(entity_1, "meatbag", Meatbag{ .health = 42, .armor = 4 });
     try world.add_component(entity_1, "transform", Transform{ .position = .{ .x = 1, .y = 1 } });
+
+    const entity_3 = try world.new_entity();
+    try world.add_component(entity_3, "moreData", MoreData{ .x = 3.2, .ads = 32 });
+
     const entity_2 = try world.new_entity();
     try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
     try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
 
-    //var iter = DataIter()
-    //    .over(.meatbag, Meatbag, .{.health})
-    //    .over(.transform, Transform, .{.position})
-    //    .init(&world);
     var iter = data_iter(.{ .meatbag = Meatbag, .transform = Transform }).init(&world);
 
     var slice = iter.next();
@@ -824,16 +863,4 @@ test "Slicing Component" {
     std.debug.assert(slice.?.transform == (try world.get_component(entity_2, "transform", Transform)).?);
     slice = iter.next();
     std.debug.assert(slice == null);
-
-    //std.debug.print("{s}", .{std.fmt.comptimePrint("{s}\n", @typeName(@TypeOf(slice)))});
-    // std.debug.print("{s}\n", .{std.fmt.comptimePrint("{}", .{@typeInfo(@typeInfo(@TypeOf(slice)).Optional.child)})});
-    // inline for (@typeInfo(@typeInfo(@TypeOf(slice)).Optional.child).Struct.fields) |field| {
-    //     std.debug.print("{s}\n", .{std.fmt.comptimePrint("{}", .{field})});
-    // }
-
-    //while (iter.next()) |slice| {
-    //    std.debug.print("{s}", .{std.fmt.comptimePrint("{s}\n", @typeName(@TypeOf(slice)))});
-    //    //std.debug.print("{}", .{std.fmt.comptimePrint("{}\n", @typeInfo(@TypeOf(slice)))});
-    //    //const health: *u32 = slice.meatbag.health;
-    //}
 }
