@@ -13,7 +13,9 @@ pub const std_options = struct {
 const RawEntity = struct { entity_id: usize, version: usize };
 const Entity = ?RawEntity;
 
-const component_allocator = std.testing.allocator;
+var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+const component_allocator = component_allocator_type.allocator();
+// const component_allocator = std.testing.allocator;
 
 // TODO: Store the entity information right next to the component.
 fn ComponentStorage(comptime ty: type) type {
@@ -190,8 +192,8 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 
 // =======================================================
 
-const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
-const ECS = struct {
+pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
+pub const ECS = struct {
     entity_info: std.ArrayList(EntityInfo),
 
     // Archetypes will be created and destroyed, however entities reference archetypes by index.
@@ -381,6 +383,7 @@ const ECS = struct {
             new_components[arch_component_names.len] = component_name;
 
             try self.archetypes.append(try Archetype.init(new_components, arch_component_types));
+            self.*.archetype_count += 1;
             matching_arch = self.archetypes.items.len - 1;
         }
         std.debug.assert(matching_arch != null);
@@ -640,9 +643,24 @@ pub fn data_iter(comptime components: anytype) type {
 
                     // Because these are all done iterating, time to go to the next archetype.
                     self.*.packed_idx = null;
-                    self.*.archetype_idx = null;
-                    // A little more magic, if there are no more archetypes, return null!
-                    return null;
+                    // self.*.archetype_idx = null;
+                    self.*.archetype_idx = self.*.archetype_idx.? + 1;
+                    std.debug.print("while {} < {}\n", .{ self.*.archetype_idx.?, self.*.ecs.archetype_count });
+                    while (self.*.archetype_idx.? < self.*.ecs.archetype_count) {
+                        std.debug.print("Trying archetype {}\n", .{self.*.archetype_idx.?});
+                        const archetype_maybe: *?Archetype = &self.*.ecs.archetypes.items[self.*.archetype_idx.?];
+                        var iter_archetype: *Archetype = &(archetype_maybe.* orelse continue);
+                        if (iter_archetype.*.contains(@constCast(baked_names[0..]))) {
+                            // break index;
+                            std.debug.print("Doing extra iteration\n", .{});
+                            return self.next();
+                        }
+                        self.*.archetype_idx = self.*.archetype_idx.? + 1;
+                    } else {
+                        // A little more magic, if there are no more archetypes, return null!
+                        std.debug.print("No more archetypes!\n", .{});
+                        return null;
+                    }
                 }
             }
             return self.*.slice;
@@ -772,6 +790,46 @@ test "Slicing Component" {
     const entity_2 = try world.new_entity();
     try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
     try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
+
+    var iter = data_iter(.{ .meatbag = Meatbag, .transform = Transform }).init(&world);
+
+    var slice = iter.next();
+    std.debug.assert(slice != null);
+    std.debug.assert(slice.?.meatbag == (try world.get_component(entity_1, "meatbag", Meatbag)).?);
+    std.debug.assert(slice.?.transform == (try world.get_component(entity_1, "transform", Transform)).?);
+    slice = iter.next();
+    std.debug.assert(slice.?.meatbag == (try world.get_component(entity_2, "meatbag", Meatbag)).?);
+    std.debug.assert(slice.?.transform == (try world.get_component(entity_2, "transform", Transform)).?);
+    slice = iter.next();
+    std.debug.assert(slice == null);
+}
+
+test "Complex Slicing" {
+    const Meatbag = struct { health: u32, armor: u32 };
+    const Vec2 = struct { x: f32, y: f32 };
+    const Distance: *const fn (Vec2, Vec2) f32 = struct {
+        pub fn d(pnt1: Vec2, pnt2: Vec2) f32 {
+            return std.math.sqrt(std.math.pow(f32, pnt1.x - pnt2.x, 2) + std.math.pow(f32, pnt1.y - pnt2.y, 2));
+        }
+    }.d;
+    _ = Distance;
+    const Transform = struct { position: Vec2 };
+    const MoreData = struct { x: f32, ads: usize };
+
+    var world = try ECS.init();
+    defer world.deinit();
+
+    const entity_1 = try world.new_entity();
+    try world.add_component(entity_1, "meatbag", Meatbag{ .health = 42, .armor = 4 });
+    try world.add_component(entity_1, "transform", Transform{ .position = .{ .x = 1, .y = 1 } });
+
+    const entity_3 = try world.new_entity();
+    try world.add_component(entity_3, "moreData", MoreData{ .x = 3.2, .ads = 32 });
+
+    const entity_2 = try world.new_entity();
+    try world.add_component(entity_2, "meatbag", Meatbag{ .health = 99, .armor = 8 });
+    try world.add_component(entity_2, "transform", Transform{ .position = .{ .x = -1, .y = -1 } });
+    try world.add_component(entity_2, "moreData", MoreData{ .x = 8.8, .ads = 42 });
 
     var iter = data_iter(.{ .meatbag = Meatbag, .transform = Transform }).init(&world);
 
