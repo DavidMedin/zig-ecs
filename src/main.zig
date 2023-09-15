@@ -1,6 +1,6 @@
 // Author : David Medin
 // Email : david@davidmedin.com
-// Zig Version : 0.11.0-dev.3936+8ae92fd17
+// Zig Version : 0.12.0-dev.21+ac95cfe44
 
 const std = @import("std");
 const testing = std.testing;
@@ -13,10 +13,6 @@ pub const std_options = struct {
 const RawEntity = struct { entity_id: usize, version: usize };
 const Entity = ?RawEntity;
 
-var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
-const component_allocator = component_allocator_type.allocator();
-// const component_allocator = std.testing.allocator;
-
 // TODO: Store the entity information right next to the component.
 fn ComponentStorage(comptime ty: type) type {
     return struct {
@@ -24,7 +20,7 @@ fn ComponentStorage(comptime ty: type) type {
 
         packed_set: std.ArrayList(ty),
 
-        pub fn init(self: *Self) !void {
+        pub fn init(self: *Self, component_allocator: std.mem.Allocator) !void {
             self.packed_set = std.ArrayList(ty).init(component_allocator);
         }
 
@@ -38,28 +34,29 @@ const ComponentStorageErased = struct {
     const Self = @This();
 
     ptr: *anyopaque,
+    component_allocator: std.mem.Allocator,
     deinit: *const fn (*Self) void,
     len: *const fn (*Self) usize,
     make_new: *const fn (*Self) anyerror!Self,
     take_from: *const fn (*Self, *ComponentStorageErased, usize) anyerror!void,
 
-    pub fn init(comptime hidden_type: type) !Self {
+    pub fn init(comptime hidden_type: type, component_allocator: std.mem.Allocator) !Self {
         const new_data = try component_allocator.create(ComponentStorage(hidden_type));
-        try new_data.init();
+        try new_data.init(component_allocator);
 
         return Self{
+            .component_allocator = component_allocator,
             .ptr = new_data,
             .deinit = struct {
                 pub fn deinit(self: *Self) void {
                     var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
                     hidden.deinit();
-                    component_allocator.destroy(hidden);
+                    self.*.component_allocator.destroy(hidden);
                 }
             }.deinit,
             .make_new = struct {
                 pub fn make_new(self: *Self) !Self {
-                    _ = self;
-                    return Self.init(hidden_type);
+                    return Self.init(hidden_type, self.*.component_allocator);
                 }
             }.make_new,
 
@@ -123,7 +120,7 @@ const Archetype = struct {
     components: std.StringArrayHashMap(ComponentStorageErased),
     len: usize, // TODO: Make this be the length of the component storage erased.
 
-    pub fn init(components: [][]const u8, component_storages: []ComponentStorageErased) !Self {
+    pub fn init(component_allocator: std.mem.Allocator, components: [][]const u8, component_storages: []ComponentStorageErased) !Self {
         std.debug.assert(components.len == component_storages.len);
         var self: Self = .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = component_storages.len };
         for (components, component_storages) |component_name, component_storage| {
@@ -142,7 +139,7 @@ const Archetype = struct {
     }
 
     // This function will create a new 'Empty Archetype'
-    pub fn init_empty() Self {
+    pub fn init_empty(component_allocator: std.mem.Allocator) Self {
         return .{ .components = std.StringArrayHashMap(ComponentStorageErased).init(component_allocator), .len = 0 };
     }
 
@@ -194,6 +191,7 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 
 pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
 pub const ECS = struct {
+    component_allocator: std.mem.Allocator,
     entity_info: std.ArrayList(EntityInfo),
 
     // Archetypes will be created and destroyed, however entities reference archetypes by index.
@@ -204,15 +202,10 @@ pub const ECS = struct {
     next_entity: usize = 0,
 
     const Self = @This();
-    pub fn init() !Self {
+    pub fn init(component_allocator: std.mem.Allocator) !Self {
         var archetypes = std.ArrayList(?Archetype).init(component_allocator);
-        try archetypes.append(Archetype.init_empty());
-        return Self{
-            .entity_info = std.ArrayList(EntityInfo).init(component_allocator),
-            .archetypes = archetypes,
-            .archetype_count = 1,
-            .next_entity = 0,
-        };
+        try archetypes.append(Archetype.init_empty(component_allocator));
+        return Self{ .entity_info = std.ArrayList(EntityInfo).init(component_allocator), .archetypes = archetypes, .archetype_count = 1, .next_entity = 0, .component_allocator = component_allocator };
     }
     pub fn deinit(self: *Self) void {
         for (self.*.archetypes.items) |*archetype| {
@@ -368,21 +361,21 @@ pub const ECS = struct {
 
             // Use the current archetype's ComponentStorageErased to create a new set of those components types
             const old_arch_component_types: []ComponentStorageErased = arch.*.components.values();
-            const arch_component_types: []ComponentStorageErased = try component_allocator.alloc(ComponentStorageErased, arch_component_names.len + 1);
-            defer component_allocator.free(arch_component_types);
+            const arch_component_types: []ComponentStorageErased = try self.*.component_allocator.alloc(ComponentStorageErased, arch_component_names.len + 1);
+            defer self.*.component_allocator.free(arch_component_types);
             // write to the new ComponentStorages
             for (old_arch_component_types, arch_component_types[0 .. arch_component_types.len - 1]) |*component_storage, *new_component_storage| {
                 new_component_storage.* = try component_storage.*.make_new(component_storage);
             }
-            arch_component_types[arch_component_names.len] = try ComponentStorageErased.init(@TypeOf(comp_t));
+            arch_component_types[arch_component_names.len] = try ComponentStorageErased.init(@TypeOf(comp_t), self.*.component_allocator);
 
-            var new_components = try component_allocator.alloc([]const u8, arch_component_names.len + 1);
-            defer component_allocator.free(new_components);
+            var new_components = try self.*.component_allocator.alloc([]const u8, arch_component_names.len + 1);
+            defer self.*.component_allocator.free(new_components);
 
             std.mem.copyForwards([]const u8, new_components[0..new_components.len], arch_component_names);
             new_components[arch_component_names.len] = component_name;
 
-            try self.archetypes.append(try Archetype.init(new_components, arch_component_types));
+            try self.archetypes.append(try Archetype.init(self.*.component_allocator, new_components, arch_component_types));
             self.*.archetype_count += 1;
             matching_arch = self.archetypes.items.len - 1;
         }
@@ -444,8 +437,8 @@ pub const ECS = struct {
         } else {
             // Make a new array of component names that will contain all of the names of the components
             // this entity has *except* for 'component_name', as we are deleting that one.
-            var component_query: [][]const u8 = try component_allocator.alloc([]const u8, current_archetype.*.len - 1);
-            defer component_allocator.free(component_query);
+            var component_query: [][]const u8 = try self.*.component_allocator.alloc([]const u8, current_archetype.*.len - 1);
+            defer self.*.component_allocator.free(component_query);
 
             const current_components: [][]const u8 = current_archetype.*.components.keys();
             //Find where the component to be removed is in the current_components.
@@ -472,7 +465,7 @@ pub const ECS = struct {
                 }
             } else {
                 // There is no archetype that has this set of components, create a new one.
-                var component_storage: []ComponentStorageErased = try component_allocator.alloc(ComponentStorageErased, component_query.len);
+                var component_storage: []ComponentStorageErased = try self.*.component_allocator.alloc(ComponentStorageErased, component_query.len);
 
                 // Use the component storages from the 'from' archetype to create the component storages we need for the 'to' archetype.
                 for (component_query, component_storage) |component, *item| {
@@ -481,7 +474,7 @@ pub const ECS = struct {
                 }
 
                 // TODO: make this fill holes rather than just append.
-                try self.*.archetypes.append(try Archetype.init(component_query, component_storage));
+                try self.*.archetypes.append(try Archetype.init(self.*.component_allocator, component_query, component_storage));
                 self.*.archetype_count += 1;
 
                 // Move entity.
@@ -673,7 +666,9 @@ test "ECS declaration" {
     const vec2 = struct { x: f32, y: f32 };
     const transform = struct { position: vec2, rotation: f32, velocity: vec2 };
 
-    var world = try ECS.init();
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const player_ent = try world.new_entity();
@@ -693,7 +688,10 @@ test "Complex Archetypes" {
     const transform = struct { position: vec2, rotation: f32, velocity: vec2 };
     const type2 = struct { member_1: i32 };
     const type3 = struct { member_1: f32 };
-    var world = try ECS.init();
+
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const ent1 = try world.new_entity();
@@ -728,7 +726,9 @@ test "Complex Archetypes" {
 test "Remove Component" {
     const Name = struct { name: []u8 };
 
-    var world = try ECS.init();
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const entity_1 = try world.new_entity();
@@ -747,7 +747,9 @@ test "Remove Component" {
 test "Writing Components" {
     const Name = struct { name: []u8 };
 
-    var world = try ECS.init();
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const clutter_ent_1 = try world.new_entity();
@@ -777,7 +779,9 @@ test "Slicing Component" {
     const Transform = struct { position: Vec2 };
     const MoreData = struct { x: f32, ads: usize };
 
-    var world = try ECS.init();
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const entity_1 = try world.new_entity();
@@ -816,7 +820,9 @@ test "Complex Slicing" {
     const Transform = struct { position: Vec2 };
     const MoreData = struct { x: f32, ads: usize };
 
-    var world = try ECS.init();
+    var component_allocator_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const component_allocator = component_allocator_type.allocator();
+    var world = try ECS.init(component_allocator);
     defer world.deinit();
 
     const entity_1 = try world.new_entity();
