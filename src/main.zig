@@ -281,12 +281,12 @@ pub const ECS = struct {
 
         // We know that all of this data will be put at the end of to_component_storage.
         // Now update the sparse set and stuff!
-        std.debug.print("Before archetype : {} | after archetype : {}\n", .{ self.*.entity_info.items[safe_entity].state.Alive.archetype_idx, to_index });
+        //std.debug.print("Before archetype : {} | after archetype : {}\n", .{ self.*.entity_info.items[safe_entity].state.Alive.archetype_idx, to_index });
         self.*.entity_info.items[safe_entity].state.Alive.archetype_idx = to_index;
 
         // If the 'from' archetype has any components (and the 'to' archetype isn't 'Empty Archetype'), then
         if (last_component_storage) |item| {
-            std.debug.print("There was some components\n", .{});
+            //std.debug.print("There was some components\n", .{});
             const key = item.key_ptr.*;
             // We can assume now that we will never come across the 'Emtpy Archetype' here.
             var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key).?;
@@ -401,12 +401,13 @@ pub const ECS = struct {
     pub fn get_component(self: *Self, entity: Entity, component_name: []const u8, comptime component_type: type) !?*component_type {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
         const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
-        std.debug.print("\nentity : {}\nversion : {}\narchetype index : {}\n", .{ safe_entity, entity.?.version, arche_info.Alive.archetype_idx });
-        std.debug.print("Archetype count : {}\n", .{self.*.archetypes.items.len});
+        //std.debug.print("\nentity : {}\nversion : {}\narchetype index : {}\n", .{ safe_entity, entity.?.version, arche_info.Alive.archetype_idx });
+        //std.debug.print("Archetype count : {}\n", .{self.*.archetypes.items.len});
 
         var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.iterator();
         while (ahhh_iter.next()) |item| {
-            std.debug.print("{}\n", .{item.key_ptr});
+            _ = item;
+            //std.debug.print("{}\n", .{item.key_ptr});
         }
 
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
@@ -612,7 +613,7 @@ pub fn data_iter(comptime components: anytype) type {
                 for (baked_names, baked_offsets, baked_component_iter_funcs) |component_name, offset, func| {
                     var component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name).?;
                     if (self.*.packed_idx.? >= component_storage_erased.*.len(component_storage_erased)) {
-                        std.debug.print("No more items in this list!\n", .{});
+                        // std.debug.print("No more items in this list!\n", .{});
                         done_iter_count += 1;
                         continue;
                     }
@@ -630,7 +631,7 @@ pub fn data_iter(comptime components: anytype) type {
                 }
 
                 // if there are any component storages that are done iterating, make sure they all are!
-                std.debug.print("ahhh : {}\n", .{done_iter_count});
+                // std.debug.print("ahhh : {}\n", .{done_iter_count});
                 if (done_iter_count > 0) {
                     std.debug.assert(done_iter_count == desc_type_info.fields.len);
 
@@ -638,20 +639,20 @@ pub fn data_iter(comptime components: anytype) type {
                     self.*.packed_idx = null;
                     // self.*.archetype_idx = null;
                     self.*.archetype_idx = self.*.archetype_idx.? + 1;
-                    std.debug.print("while {} < {}\n", .{ self.*.archetype_idx.?, self.*.ecs.archetype_count });
+                    // std.debug.print("while {} < {}\n", .{ self.*.archetype_idx.?, self.*.ecs.archetype_count });
                     while (self.*.archetype_idx.? < self.*.ecs.archetype_count) {
-                        std.debug.print("Trying archetype {}\n", .{self.*.archetype_idx.?});
+                        // std.debug.print("Trying archetype {}\n", .{self.*.archetype_idx.?});
                         const archetype_maybe: *?Archetype = &self.*.ecs.archetypes.items[self.*.archetype_idx.?];
                         var iter_archetype: *Archetype = &(archetype_maybe.* orelse continue);
                         if (iter_archetype.*.contains(@constCast(baked_names[0..]))) {
                             // break index;
-                            std.debug.print("Doing extra iteration\n", .{});
+                            // std.debug.print("Doing extra iteration\n", .{});
                             return self.next();
                         }
                         self.*.archetype_idx = self.*.archetype_idx.? + 1;
                     } else {
                         // A little more magic, if there are no more archetypes, return null!
-                        std.debug.print("No more archetypes!\n", .{});
+                        // std.debug.print("No more archetypes!\n", .{});
                         return null;
                     }
                 }
