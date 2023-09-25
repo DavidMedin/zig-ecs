@@ -19,7 +19,7 @@
                 "test",
                 "-femit-bin=${workspaceFolder}/zig-out/bin/test-bin",
                 "--test-no-exec",
-                "src/main.zig"
+                "src/tests.zig"
             ],
             "problemMatcher": [],
             "group": {
