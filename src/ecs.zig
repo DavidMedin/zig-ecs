@@ -211,7 +211,7 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 
 // =======================================================
 
-pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
+pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, EntityDoesNotHaveComponent }; // Removed : DeadEntity
 pub const ECSConfig = struct { component_allocator: std.mem.Allocator };
 pub const ECS = struct {
     const EntCompPair = struct {entity : RawEntity, component : []u8};
@@ -318,14 +318,24 @@ pub const ECS = struct {
     }
 
     pub fn new_entity(self: *Self) !Entity {
-        self.*.next_entity += 1;
+        // Try to find an entity that is dead.
+        var entity_id : usize = undefined;
+        var new_info: *EntityInfo = for(0..,self.*.entity_info.items) |index, *entity_info| {
+            if(entity_info.*.state == .Dead) {
+                entity_id = index;
+                break entity_info;
+            }
+        }else thing: {
+            entity_id = self.*.next_entity;
+            self.*.next_entity += 1;
+            const new_info = try self.*.entity_info.addOne();
+            new_info.*.version = 0;
+            break :thing new_info;
+        };
 
-        var new_info: *EntityInfo = try self.*.entity_info.addOne();
-        new_info.*.version = 0;
         new_info.*.state = .{ .Alive = .{ .archetype_idx = 0, .packed_idx = null } };
-
         self.*.archetypes.items[0].?.entity_count += 1;
-        return .{ .entity_id = self.*.next_entity - 1, .version = 0 };
+        return .{ .entity_id = entity_id, .version = new_info.*.version };
     }
 
     // This function will return the RawEntity an Entity is hiding.
@@ -336,7 +346,8 @@ pub const ECS = struct {
             return ECSError.OldEntity;
         }
         if (self.*.entity_info.items[safe_entity.entity_id].state == EntityArche.Dead) {
-            return ECSError.DeadEntity;
+            // return ECSError.DeadEntity;
+            unreachable; // This shouldn't ever happen if the version are mismatched, unless the user constructed their own entity. Citation needed.
         }
 
         if (self.*.archetypes.items[self.*.entity_info.items[safe_entity.entity_id].state.Alive.archetype_idx] == null) {
@@ -350,8 +361,17 @@ pub const ECS = struct {
         return entity.?.entity_id;
     }
 
+    // Like move_entity, but asserts that there is only one component difference between the two archetypes.
+    fn move_entity_one(self: *Self, entity : Entity, from_index : usize, to_index : usize) !void {
+        var from: *?Archetype = &self.*.archetypes.items[from_index];
+        var to: *Archetype = &self.*.archetypes.items[to_index].?;
+        const from_component_count: i64 = @intCast(from.*.?.components.count());
+        const to_component_count: i64 = @intCast(to.*.components.count());
+        std.debug.assert(try std.math.absInt(from_component_count - to_component_count) == 1);
+        return self.move_entity(entity, from_index, to_index);
+    }
     // Move an entity from one archetype to another. Obviously, this can be dangerous.
-    // You can use this function to go to a bigger or smaller archetype. If it is bigger, you are responsible for adding the new component.
+    // You can use this function to go to a bigger or smaller archetype. If it is bigger, you are responsible for adding the new components.
     // If the source archetype has no components, then nothing will be written to the destination archetype,
     //  and you may need to update the packed set index if you add something again.
     fn move_entity(self: *Self, entity: Entity, from_index: usize, to_index: usize) !void {
@@ -363,11 +383,7 @@ pub const ECS = struct {
         var to: *Archetype = &self.*.archetypes.items[to_index].?;
 
         // Assert that the two archetypes should be only one component away from each other.
-        std.log.debug("from component count : {} --- to component count : {}", .{ from.*.?.components.count(), to.*.components.count() });
-
-        const from_component_count: i64 = @intCast(from.*.?.components.count());
-        const to_component_count: i64 = @intCast(to.*.components.count());
-        std.debug.assert(try std.math.absInt(from_component_count - to_component_count) == 1);
+        // std.log.debug("from component count : {} --- to component count : {}", .{ from.*.?.components.count(), to.*.components.count() });
 
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();
@@ -383,7 +399,7 @@ pub const ECS = struct {
 
             try to_component_storage.*.take_from(to_component_storage, value, entity_index);
         }
-        // Remove 1 component from the archetype!
+        // Remove 1 entity from the archetype!
         from.*.?.entity_count -= 1;
         to.*.entity_count += 1;
 
@@ -499,7 +515,7 @@ pub const ECS = struct {
 
         const to_archetype: *Archetype = &self.*.archetypes.items[matching_arch.?].?;
 
-        try self.move_entity(entity, ent_info.state.Alive.archetype_idx, matching_arch.?);
+        try self.move_entity_one(entity, ent_info.state.Alive.archetype_idx, matching_arch.?);
 
         // Finally, add the new component.
         var new_component_storage_erased: *ComponentStorageErased = to_archetype.*.components.getPtr(component_name).?;
@@ -544,7 +560,7 @@ pub const ECS = struct {
 
         if (current_archetype.*.components.count() == 1) {
             // Simply move this entity to the 'Empty Architecture'
-            try self.*.move_entity(entity, current_archetype_idx, 0);
+            try self.*.move_entity_one(entity, current_archetype_idx, 0);
             // I don't think there is any cleanup.
             entity_info.*.state.Alive.archetype_idx = 0;
             entity_info.*.state.Alive.packed_idx = null;
@@ -574,7 +590,7 @@ pub const ECS = struct {
                 var archetype: *Archetype = &item.*.?;
                 if (archetype.*.compare(component_query) == true) {
                     // This archetype is the guy.
-                    try self.*.move_entity(entity, current_archetype_idx, index);
+                    try self.*.move_entity_one(entity, current_archetype_idx, index);
                     break;
                 }
             } else {
@@ -592,7 +608,7 @@ pub const ECS = struct {
                 self.*.archetype_count += 1;
 
                 // Move entity.
-                try self.*.move_entity(entity, current_archetype_idx, self.*.archetype_count - 1);
+                try self.*.move_entity_one(entity, current_archetype_idx, self.*.archetype_count - 1);
             }
         }
     }
@@ -614,7 +630,8 @@ pub const ECS = struct {
         // move to the "Empty Archetype"
         const arche_idx = self.*.entity_info.items[safe_entity].state.Alive.archetype_idx;
 
-        try self.*.move_entity(entity, arche_idx, 0); // I hope this will fully move and clean things up.
+        try self.move_entity(entity, arche_idx, 0);
+        
         self.*.archetypes.items[0].?.entity_count -= 1; // This archetype has no data to wrestle (yay!)
 
         var entity_info = &self.*.entity_info.items[safe_entity];

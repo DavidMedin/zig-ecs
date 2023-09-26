@@ -290,5 +290,105 @@ test "Simple Kill Entity" {
     std.debug.assert(ent_1.?.entity_id == 0);
     try world.kill_entity(ent_1);
     const attempt_ret = world.get_component(ent_1, "thing", Thing);
-    std.debug.assert( attempt_ret == ecs.ECSError.DeadEntity );
+    std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+
+    const new_ent_1 : ecs.Entity = try world.new_entity();
+    std.debug.assert(new_ent_1.?.entity_id == 0);
+    std.debug.assert(new_ent_1.?.version == 1);
+}
+
+
+test "More Compelx Kill Entity" {
+    const Thing = struct {aight : i32};
+    const OtherThing = struct {aahh : u32};
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 : ecs.Entity = try world.new_entity();
+    const ent_2 : ecs.Entity = try world.new_entity();
+    const ent_3 : ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    std.debug.assert(ent_1.?.version == 0);
+    std.debug.assert(ent_1.?.entity_id == 0);
+
+    try world.add_component(ent_2, "thing", Thing{.aight = 2});
+    std.debug.assert(ent_2.?.version == 0);
+    std.debug.assert(ent_2.?.entity_id == 1);
+
+    try world.add_component(ent_3, "thing", Thing{.aight = 2});
+    std.debug.assert(ent_3.?.version == 0);
+    std.debug.assert(ent_3.?.entity_id == 2);
+    
+    try world.add_component(ent_2, "other-thing", OtherThing{.aahh = 53});
+    _ = (try world.get_component(ent_2, "other-thing", OtherThing)).?;
+
+    try world.kill_entity(ent_2);
+    {
+        const attempt_ret = world.get_component(ent_2, "thing", Thing);
+        std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+    }
+    {
+        const attempt_ret = world.get_component(ent_2, "other-thing", OtherThing);
+        std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+    }
+
+    const new_ent_2 : ecs.Entity = try world.new_entity();
+    std.debug.assert(new_ent_2.?.entity_id == 1);
+    std.debug.assert(new_ent_2.?.version == 1);
+}
+
+test "Simple Remove Component" {
+    const Thing = struct {aight : i32};
+    
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 : ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    std.debug.assert(ent_1.?.version == 0);
+    std.debug.assert(ent_1.?.entity_id == 0);
+    try world.remove_component(ent_1, "thing");
+    const attempt_ret = try world.get_component(ent_1, "thing", Thing);
+    std.debug.assert( attempt_ret == null );
+}
+
+test "Complex Remove Component" {
+    const Thing = struct {aight : i32};
+    const OtherThing = struct {aahh : u32};
+
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 : ecs.Entity = try world.new_entity();
+    std.debug.assert(ent_1.?.version == 0);
+    std.debug.assert(ent_1.?.entity_id == 0);
+    const ent_2 : ecs.Entity = try world.new_entity();
+    const ent_3 : ecs.Entity = try world.new_entity();
+    const ent_4 : ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    try world.add_component(ent_2, "thing", Thing{.aight = 53});
+    try world.add_component(ent_3, "thing", Thing{.aight = -1});
+    try world.add_component(ent_4, "thing", Thing{.aight = 8});
+    try world.add_component(ent_1, "other-thing", OtherThing{.aahh = 85});
+    try world.add_component(ent_3, "other-thing", OtherThing{.aahh = 123});
+    try world.add_component(ent_4, "other-thing", OtherThing{.aahh = 5});
+
+    try world.remove_component(ent_1, "other-thing");
+    std.debug.assert( (try world.get_component(ent_1, "thing", Thing)).?.*.aight == 2);
+    std.debug.assert( (try world.get_component(ent_1, "other-thing", OtherThing)) == null );
+
+    std.debug.assert( (try world.get_component(ent_4, "thing", Thing)).?.*.aight == 8 );
+    std.debug.assert( (try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5 );
+
+    std.debug.assert( (try world.get_component(ent_3, "thing", Thing)).?.*.aight == -1 );
+    std.debug.assert( (try world.get_component(ent_3, "other-thing", OtherThing)).?.*.aahh == 123 );
+    
+    std.debug.assert( (try world.get_component(ent_2, "thing", Thing)).?.*.aight == 2 );
+    std.debug.assert( (try world.get_component(ent_2, "other-thing", OtherThing)) == null );
 }
