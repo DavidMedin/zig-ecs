@@ -7,6 +7,7 @@
 //    [x] Return Number of Archetypes & what components are in each archetype and the number of entities in an archetype
 // [x] Iteration includes .entity
 // [] make data_iter work for every entity ( .{} should result in iterating through all entities)
+// [] Batch add and remove components
 // [] check_health function. Sanity checks everything I can think of. ie all ComponentManagerErased's should have the same length in one archetype.
 
 const std = @import("std");
@@ -213,6 +214,8 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, DeadEntity, EntityDoesNotHaveComponent };
 pub const ECSConfig = struct { component_allocator: std.mem.Allocator };
 pub const ECS = struct {
+    const EntCompPair = struct {entity : RawEntity, component : []u8};
+
     ecs_config: ECSConfig,
     entity_info: std.ArrayList(EntityInfo),
 
@@ -221,13 +224,24 @@ pub const ECS = struct {
     // We'll do the non-congiuous thing.
     archetypes: std.ArrayList(?Archetype),
     archetype_count: usize,
+
+    remove_queue : std.ArrayList(EntCompPair),
+    kill_queue : std.ArrayList(RawEntity),
     next_entity: usize = 0,
 
     const Self = @This();
     pub fn init(ecs_config: ECSConfig) !Self {
         var archetypes = std.ArrayList(?Archetype).init(ecs_config.component_allocator);
         try archetypes.append(Archetype.init_empty(ecs_config.component_allocator));
-        return Self{ .entity_info = std.ArrayList(EntityInfo).init(ecs_config.component_allocator), .archetypes = archetypes, .archetype_count = 1, .next_entity = 0, .ecs_config = ecs_config };
+        return Self{ 
+            .remove_queue = std.ArrayList(EntCompPair).init(ecs_config.component_allocator),
+            .kill_queue = std.ArrayList(RawEntity).init(ecs_config.component_allocator),
+            .entity_info = std.ArrayList(EntityInfo).init(ecs_config.component_allocator),
+            .archetypes = archetypes,
+            .archetype_count = 1,
+            .next_entity = 0,
+            .ecs_config = ecs_config
+        };
     }
     pub fn deinit(self: *Self) void {
         for (self.*.archetypes.items) |*maybe_archetype| {
@@ -237,6 +251,32 @@ pub const ECS = struct {
         }
         self.*.archetypes.deinit();
         self.*.entity_info.deinit();
+        self.*.kill_queue.deinit();
+        self.*.remove_queue.deinit();
+    }
+
+    pub fn queue_kill_entity(self : *Self, entity : Entity) !void {
+        try self.check_entity(entity);
+        self.*.kill_queue.AddOne(entity.?);
+    }
+
+    pub fn queue_remove_component(self : *Self, entity : Entity, component : []u8) !void {
+        try self.check_entity(entity);
+        self.*.remove_queue.addOne(.{.entity = entity.?, .component = component});
+    }
+
+    pub fn remove_queued_components(self : *Self) !void {
+        for(self.*.remove_queue.items) |item| {
+            try self.remove_component(item.entity, item.component);
+        }
+        self.*.remove_queue.clearAndFree();
+    }
+
+    pub fn kill_queued_entities(self : *Self) !void {
+        for(self.*.kill_queue.items) |entity| {
+            try self.*.kill_entity(entity);
+        }
+        self.*.kill_queue.clearAndFree();
     }
 
     // If all you know is where a component is, this will get you the entity. Warning!: Slow! TODO: store the entity right next to the component maybe.
@@ -391,7 +431,6 @@ pub const ECS = struct {
         }
     }
 
-    // TODO: Make simpler. Make the name of the typine in comp_t be the component_name.
     pub fn add_component(self: *Self, entity: Entity, component_name: []const u8, comp_t: anytype) !void {
         // Unwrap entity.
         const safe_entity: usize = try self.*.unwrap_entity(entity);
@@ -567,6 +606,21 @@ pub const ECS = struct {
         var component_storage: *ComponentStorage(@TypeOf(data)) = component_storage_erased.*.cast(@TypeOf(data));
         component_storage.*.packed_set.items[entity_info.state.Alive.packed_idx.?] = data;
     }
+
+    pub fn kill_entity(self : *Self, entity : Entity) !void {
+        const safe_entity : usize = try self.*.unwrap_entity(entity);
+        
+        // Find the archetype the entity belongs too.
+        // move to the "Empty Archetype"
+        const arche_idx = self.*.entity_info.items[safe_entity].state.Alive.archetype_idx;
+
+        try self.*.move_entity(entity, arche_idx, 0); // I hope this will fully move and clean things up.
+        self.*.archetypes.items[0].?.entity_count -= 1; // This archetype has no data to wrestle (yay!)
+
+        var entity_info = &self.*.entity_info.items[safe_entity];
+        entity_info.*.version += 1;
+        entity_info.*.state = .Dead;
+    }
 };
 
 pub fn data_iter(comptime components: anytype) type {
@@ -721,4 +775,5 @@ pub fn data_iter(comptime components: anytype) type {
             return self.*.slice;
         }
     };
+    
 }

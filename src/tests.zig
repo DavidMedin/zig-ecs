@@ -197,6 +197,7 @@ test "Complex Slicing" {
 }
 
 // This next test was breaking the Playdate Simulator. I don't know why. Maybe it's the ECS, hence this test.
+// Now I know. It had nothing to do with the ECS but instead how I made the allocator in that project. No worries here!
 test "Funky Playdate Breaker" {
     const Brain = struct { reaction_time: u64, body: ecs.Entity };
     const Controls = struct {
@@ -242,7 +243,7 @@ test "Funky Playdate Breaker" {
         // Create enemy
         const enemy_brain: ecs.Entity = try world.new_entity();
         try world.add_component(enemy_brain, "brain", Brain{ .reaction_time = 2, .body = undefined });
-        // try world.add_component(enemy_brain, "controls", controls.Controls{ .movement = 0 });
+        try world.add_component(enemy_brain, "controls", Controls{ .movement = 0 });
         var enemy_brain_component: *Brain = (try world.get_component(enemy_brain, "brain", Brain)).?;
 
     //     // Body entity
@@ -274,4 +275,20 @@ test "Funky Playdate Breaker" {
     }
 
     
+}
+
+test "Simple Kill Entity" {
+    const Thing = struct {aight : i32};
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 : ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    std.debug.assert(ent_1.?.version == 0);
+    std.debug.assert(ent_1.?.entity_id == 0);
+    try world.kill_entity(ent_1);
+    const attempt_ret = world.get_component(ent_1, "thing", Thing);
+    std.debug.assert( attempt_ret == ecs.ECSError.DeadEntity );
 }
