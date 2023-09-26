@@ -390,6 +390,6 @@ test "Complex Remove Component" {
     std.debug.assert((try world.get_component(ent_3, "thing", Thing)).?.*.aight == -1);
     std.debug.assert((try world.get_component(ent_3, "other-thing", OtherThing)).?.*.aahh == 123);
 
-    std.debug.assert((try world.get_component(ent_2, "thing", Thing)).?.*.aight == 2);
+    std.debug.assert((try world.get_component(ent_2, "thing", Thing)).?.*.aight == 53);
     std.debug.assert((try world.get_component(ent_2, "other-thing", OtherThing)) == null);
 }

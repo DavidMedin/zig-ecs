@@ -391,26 +391,22 @@ pub const ECS = struct {
         var from: *?Archetype = &self.*.archetypes.items[from_index];
         var to: *Archetype = &self.*.archetypes.items[to_index].?;
 
-        // Assert that the two archetypes should be only one component away from each other.
-        std.debug.print("from component count : {} --- to component count : {}", .{ from.*.?.components.count(), to.*.components.count() });
-
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();
-        // var last_component_storage: ?std.StringArrayHashMap(ComponentStorageErased).Entry = null;
-        // var to_component_storage_size : ?usize = null;
         const entity_info: *EntityArche = &self.*.entity_info.items[safe_entity].state;
+        const old_entity_packed_idx : ?usize = entity_info.*.Alive.packed_idx;
         while (map_iter.next()) |item| {
             const key = item.key_ptr.*;
             const value: *ComponentStorageErased = item.value_ptr;
 
             // If the 'to' archetype has this component, take from!
             if(to.*.components.getPtr(key)) | to_component_storage| {
-                try to_component_storage.*.take_from(to_component_storage, value, entity_info.*.Alive.packed_idx.?);
+                try to_component_storage.*.take_from(to_component_storage, value, old_entity_packed_idx.?);
                 entity_info.*.Alive.packed_idx = to_component_storage.*.len(to_component_storage) - 1; // Redundent.
 
             }else {
                 // If the 'to' archetype doesn't have this archetype, reduce the array size by one.
-                try value.*.swap_del(value, entity_info.*.Alive.packed_idx.?);
+                try value.*.swap_del(value, old_entity_packed_idx.?);
             }
         }
         // Remove 1 entity from the archetype!
@@ -429,27 +425,11 @@ pub const ECS = struct {
         entity_info.*.Alive.archetype_idx = to_index;
 
         // Update entity info for the two entities.
-        // If any memory was moved
-        // if (to_component_storage_size) |item| { // Store for later
-
-        //     // Update the entity info of the entity we just moved.
-        //     entity_info.*.Alive.packed_idx = item;
-        // }
-
-        // const entity_packed_index: ?usize = ;
-        // If there are any entities left in 'from'... and it entity wasn't the last item in the packed set.
-        // if (((from_index == 0 and from.*.?.entity_count > 0) or from.* != null) and entity_packed_index != from.*.?.entity_count) {
-        if(from.* != null and from_index != 0 and (entity_info.*.Alive.packed_idx != from.*.?.entity_count)){
-            // var from_component_storage: *ComponentStorageErased = from.*.?.components.getPtr(key).?;
-
+        if(from.* != null and from_index != 0 and (old_entity_packed_idx.? != from.*.?.entity_count)){
             // Update the entity we moved in the 'from' archetype. This is needed because we used the 'swapRemove' function.
             // TODO: Get rid of this garbage. Store the entity information right next to each component.
-            const from_comp_len = from.*.?.entity_count;
-            _ = from_comp_len;
-            self.print_info();
             if (self.*.find_entity(from_index, from.*.?.entity_count)) |moved_entity| {
-                // moved_entity.*.state.Alive.packed_idx = entity_packed_index;
-                self.*.entity_info.items[moved_entity.entity_id].state.Alive.packed_idx = entity_info.*.Alive.packed_idx;
+                self.*.entity_info.items[moved_entity.entity_id].state.Alive.packed_idx = old_entity_packed_idx.?;
             } else {
                 unreachable; // Oh boy, we lost that one entity we moved...
             }
@@ -545,10 +525,6 @@ pub const ECS = struct {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
         const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
 
-        // var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.iterator();
-        // while (ahhh_iter.next()) |item| {
-        //     _ = item;
-        // }
 
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
             var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
