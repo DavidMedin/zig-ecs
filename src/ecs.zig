@@ -55,6 +55,7 @@ const ComponentStorageErased = struct {
     deinit: *const fn (*Self) void,
     len: *const fn (*Self) usize,
     make_new: *const fn (*Self) anyerror!Self,
+    swap_del: *const fn (*Self, usize) anyerror!void,
     take_from: *const fn (*Self, *ComponentStorageErased, usize) anyerror!void,
 
     pub fn init(comptime hidden_type: type, component_allocator: std.mem.Allocator) !Self {
@@ -83,7 +84,12 @@ const ComponentStorageErased = struct {
                     return hidden.*.packed_set.items.len;
                 }
             }.len,
-
+            .swap_del = struct {
+                pub fn swap_del(self : *Self, index : usize) anyerror!void {
+                    var hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    _ = hidden_self.*.packed_set.swapRemove(index);
+                }
+            }.swap_del,
             .take_from = struct {
                 // This function will take the component from 'take_from_this' at index 'from_index' and move it to
                 // self's end. Note, this does not know what an 'ECS' is, and will not adjust the Grand Sparse Set.
@@ -390,17 +396,22 @@ pub const ECS = struct {
 
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();
-        var last_component_storage: ?std.StringArrayHashMap(ComponentStorageErased).Entry = null;
+        // var last_component_storage: ?std.StringArrayHashMap(ComponentStorageErased).Entry = null;
+        // var to_component_storage_size : ?usize = null;
+        const entity_info: *EntityArche = &self.*.entity_info.items[safe_entity].state;
         while (map_iter.next()) |item| {
             const key = item.key_ptr.*;
             const value: *ComponentStorageErased = item.value_ptr;
-            var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key) orelse continue;
-            last_component_storage = item;
 
-            // This way we know where the last item of the 'from' archetype went.
-            const entity_index: usize = self.*.entity_info.items[safe_entity].state.Alive.packed_idx.?;
+            // If the 'to' archetype has this component, take from!
+            if(to.*.components.getPtr(key)) | to_component_storage| {
+                try to_component_storage.*.take_from(to_component_storage, value, entity_info.*.Alive.packed_idx.?);
+                entity_info.*.Alive.packed_idx = to_component_storage.*.len(to_component_storage) - 1; // Redundent.
 
-            try to_component_storage.*.take_from(to_component_storage, value, entity_index);
+            }else {
+                // If the 'to' archetype doesn't have this archetype, reduce the array size by one.
+                try value.*.swap_del(value, entity_info.*.Alive.packed_idx.?);
+            }
         }
         // Remove 1 entity from the archetype!
         from.*.?.entity_count -= 1;
@@ -415,38 +426,35 @@ pub const ECS = struct {
 
         // We know that all of this data will be put at the end of to_component_storage.
         // Now update the sparse set and stuff!
-        self.*.entity_info.items[safe_entity].state.Alive.archetype_idx = to_index;
+        entity_info.*.Alive.archetype_idx = to_index;
 
         // Update entity info for the two entities.
-        // If the 'from' archetype has any components, then
-        if (last_component_storage) |item| {
-            const key = item.key_ptr.*;
-            // We can assume now that we will never come across the 'Emtpy Archetype' here.
-            var to_component_storage: *ComponentStorageErased = to.*.components.getPtr(key).?;
+        // If any memory was moved
+        // if (to_component_storage_size) |item| { // Store for later
 
-            const entity_packed_index: usize = self.*.entity_info.items[safe_entity].state.Alive.packed_idx.?; // Store for later
+        //     // Update the entity info of the entity we just moved.
+        //     entity_info.*.Alive.packed_idx = item;
+        // }
 
-            // Update the entity info of the entity we just moved.
-            self.*.entity_info.items[safe_entity].state.Alive.packed_idx = to_component_storage.*.len(to_component_storage) - 1;
+        // const entity_packed_index: ?usize = ;
+        // If there are any entities left in 'from'... and it entity wasn't the last item in the packed set.
+        // if (((from_index == 0 and from.*.?.entity_count > 0) or from.* != null) and entity_packed_index != from.*.?.entity_count) {
+        if(from.* != null and from_index != 0 and (entity_info.*.Alive.packed_idx != from.*.?.entity_count)){
+            // var from_component_storage: *ComponentStorageErased = from.*.?.components.getPtr(key).?;
 
-            // If there are any entities left in 'from'... and it entity wasn't the last item in the packed set.
-            if (((from_index == 0 and from.*.?.entity_count > 0) or from.* != null) and entity_packed_index != from.*.?.entity_count) {
-                // var from_component_storage: *ComponentStorageErased = from.*.?.components.getPtr(key).?;
-
-                // Update the entity we moved in the 'from' archetype. This is needed because we used the 'swapRemove' function.
-                // TODO: Get rid of this garbage. Store the entity information right next to each component.
-                const from_comp_len = from.*.?.entity_count;
-                _ = from_comp_len;
-                self.print_info();
-                if (self.*.find_entity(from_index, from.*.?.entity_count)) |moved_entity| {
-                    // moved_entity.*.state.Alive.packed_idx = entity_packed_index;
-                    self.*.entity_info.items[moved_entity.entity_id].state.Alive.packed_idx = entity_packed_index;
-                } else {
-                    unreachable; // Oh boy, we lost that one entity we moved...
-                }
-            } else { // The entity we just moved was the last entity in this archetype.
-                // Do nothing, just room for comments.
+            // Update the entity we moved in the 'from' archetype. This is needed because we used the 'swapRemove' function.
+            // TODO: Get rid of this garbage. Store the entity information right next to each component.
+            const from_comp_len = from.*.?.entity_count;
+            _ = from_comp_len;
+            self.print_info();
+            if (self.*.find_entity(from_index, from.*.?.entity_count)) |moved_entity| {
+                // moved_entity.*.state.Alive.packed_idx = entity_packed_index;
+                self.*.entity_info.items[moved_entity.entity_id].state.Alive.packed_idx = entity_info.*.Alive.packed_idx;
+            } else {
+                unreachable; // Oh boy, we lost that one entity we moved...
             }
+        } else { // The entity we just moved was the last entity in this archetype.
+            // Do nothing, just room for comments.
         }
     }
 
