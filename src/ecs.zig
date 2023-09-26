@@ -92,9 +92,9 @@ const ComponentStorageErased = struct {
                     var hidden_from: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(take_from_this.*.ptr));
 
                     // copy the value
-                    const moving_value: hidden_type = hidden_from.*.packed_set.items[from_index];
+                    // const moving_value: hidden_type = hidden_from.*.packed_set.items[from_index];
                     //Remove the value
-                    _ = hidden_from.*.packed_set.swapRemove(from_index);
+                    const moving_value : hidden_type = hidden_from.*.packed_set.swapRemove(from_index);
                     //write the value to the other component storage.
                     try hidden_self.*.packed_set.append(moving_value);
                 }
@@ -166,6 +166,9 @@ const Archetype = struct {
 
     // Returns true if compare_keys - which is an slice of strings - is exactly the component names of the Archetype.
     pub fn compare(self: *Self, compare_keys: [][]const u8) bool {
+        if(self.*.components.count() != compare_keys.len) {
+            return false; // We just know that it is false.
+        }
         for (self.*.components.keys()) |keys| {
             const was_found: bool = for (compare_keys) |compare_key| {
                 if (std.mem.eql(u8, compare_key, keys) == true) {
@@ -383,7 +386,7 @@ pub const ECS = struct {
         var to: *Archetype = &self.*.archetypes.items[to_index].?;
 
         // Assert that the two archetypes should be only one component away from each other.
-        // std.log.debug("from component count : {} --- to component count : {}", .{ from.*.?.components.count(), to.*.components.count() });
+        std.debug.print("from component count : {} --- to component count : {}", .{ from.*.?.components.count(), to.*.components.count() });
 
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();

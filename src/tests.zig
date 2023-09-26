@@ -3,6 +3,7 @@ const testing = std.testing;
 
 const ecs = @import("ecs.zig");
 
+
 test "ECS declaration" {
     const meatbag = struct { health: u32, something_else: i64 };
     const vec2 = struct { x: f32, y: f32 };
@@ -348,12 +349,16 @@ test "Simple Remove Component" {
     defer world.deinit();
 
     const ent_1 : ecs.Entity = try world.new_entity();
+    const ent_2 : ecs.Entity = try world.new_entity();
     try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    try world.add_component(ent_2, "thing", Thing{.aight = 4});
     std.debug.assert(ent_1.?.version == 0);
     std.debug.assert(ent_1.?.entity_id == 0);
     try world.remove_component(ent_1, "thing");
     const attempt_ret = try world.get_component(ent_1, "thing", Thing);
     std.debug.assert( attempt_ret == null );
+    const ahh = try world.get_component(ent_2, "thing", Thing);
+    std.debug.assert( ahh.?.*.aight == 4);
 }
 
 test "Complex Remove Component" {
@@ -378,12 +383,15 @@ test "Complex Remove Component" {
     try world.add_component(ent_1, "other-thing", OtherThing{.aahh = 85});
     try world.add_component(ent_3, "other-thing", OtherThing{.aahh = 123});
     try world.add_component(ent_4, "other-thing", OtherThing{.aahh = 5});
+    std.debug.assert( (try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5 );
 
     try world.remove_component(ent_1, "other-thing");
     std.debug.assert( (try world.get_component(ent_1, "thing", Thing)).?.*.aight == 2);
     std.debug.assert( (try world.get_component(ent_1, "other-thing", OtherThing)) == null );
 
     std.debug.assert( (try world.get_component(ent_4, "thing", Thing)).?.*.aight == 8 );
+    const why = (try world.get_component(ent_4, "other-thing", OtherThing));
+    _ = why;
     std.debug.assert( (try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5 );
 
     std.debug.assert( (try world.get_component(ent_3, "thing", Thing)).?.*.aight == -1 );

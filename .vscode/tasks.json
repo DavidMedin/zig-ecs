@@ -17,7 +17,7 @@
             "command": "zig",
             "args": [
                 "test",
-                "-femit-bin=${workspaceFolder}/zig-out/bin/test-bin",
+                "-femit-bin=${workspaceFolder}/zig-out/test-bin",
                 "--test-no-exec",
                 "src/tests.zig"
             ],
