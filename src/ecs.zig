@@ -537,13 +537,16 @@ pub const ECS = struct {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
         const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
 
-        var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.iterator();
-        while (ahhh_iter.next()) |item| {
-            _ = item;
-        }
+        // var ahhh_iter = self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.iterator();
+        // while (ahhh_iter.next()) |item| {
+        //     _ = item;
+        // }
 
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
             var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
+            if(component_storage.*.packed_set.items.len <= arche_info.Alive.packed_idx.?) {
+                @panic("Out of bounds reading\n");
+            }
             return &component_storage.*.packed_set.items[arche_info.Alive.packed_idx.?];
         } else {
             return null;

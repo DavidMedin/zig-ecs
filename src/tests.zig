@@ -3,7 +3,6 @@ const testing = std.testing;
 
 const ecs = @import("ecs.zig");
 
-
 test "ECS declaration" {
     const meatbag = struct { health: u32, something_else: i64 };
     const vec2 = struct { x: f32, y: f32 };
@@ -203,7 +202,7 @@ test "Funky Playdate Breaker" {
     const Brain = struct { reaction_time: u64, body: ecs.Entity };
     const Controls = struct {
         const Self = @This();
-        pressed_this_frame : bool = false,
+        pressed_this_frame: bool = false,
         movement: i32,
     };
     const Body = struct { brain: ecs.Entity };
@@ -211,17 +210,14 @@ test "Funky Playdate Breaker" {
         const Self = @This();
         bitmap: *anyopaque,
     };
-    const Transform = struct {
-        x : i32, y : i32
-    };
-
+    const Transform = struct { x: i32, y: i32 };
 
     var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
     const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
     var world = try ecs.ECS.init(ecs_config);
     defer world.deinit();
 
-    var fake_data : i32 = 42;
+    var fake_data: i32 = 42;
     {
         // Brain entity
         const player_brain: ecs.Entity = try world.new_entity();
@@ -236,9 +232,7 @@ test "Funky Playdate Breaker" {
 
         try world.add_component(player_body, "image", Image{ .bitmap = &fake_data });
         try world.add_component(player_body, "transform", Transform{ .x = 4, .y = 4 });
-
     }
-
 
     {
         // Create enemy
@@ -247,14 +241,13 @@ test "Funky Playdate Breaker" {
         try world.add_component(enemy_brain, "controls", Controls{ .movement = 0 });
         var enemy_brain_component: *Brain = (try world.get_component(enemy_brain, "brain", Brain)).?;
 
-    //     // Body entity
+        //     // Body entity
         const enemy_body: ecs.Entity = try world.new_entity();
         enemy_brain_component.*.body = enemy_body; // Linking the body to the brain
         try world.add_component(enemy_body, "body", Body{ .brain = enemy_brain });
 
         try world.add_component(enemy_body, "image", Image{ .bitmap = &fake_data });
         try world.add_component(enemy_body, "transform", Transform{ .x = 4, .y = 6 });
-
     }
 
     {
@@ -271,132 +264,132 @@ test "Funky Playdate Breaker" {
         while (move_iter.next()) |slice| {
             slice.controls.*.movement = 2;
             // controls.update_controls(playdate, slice.controls);
-            
+
         }
     }
-
-    
 }
 
 test "Simple Kill Entity" {
-    const Thing = struct {aight : i32};
+    const Thing = struct { aight: i32 };
     var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
     const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
     var world = try ecs.ECS.init(ecs_config);
     defer world.deinit();
 
-    const ent_1 : ecs.Entity = try world.new_entity();
-    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    const ent_1: ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
     std.debug.assert(ent_1.?.version == 0);
     std.debug.assert(ent_1.?.entity_id == 0);
     try world.kill_entity(ent_1);
     const attempt_ret = world.get_component(ent_1, "thing", Thing);
-    std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+    std.debug.assert(attempt_ret == ecs.ECSError.OldEntity);
 
-    const new_ent_1 : ecs.Entity = try world.new_entity();
+    const new_ent_1: ecs.Entity = try world.new_entity();
     std.debug.assert(new_ent_1.?.entity_id == 0);
     std.debug.assert(new_ent_1.?.version == 1);
 }
 
-
 test "More Compelx Kill Entity" {
-    const Thing = struct {aight : i32};
-    const OtherThing = struct {aahh : u32};
+    const Thing = struct { aight: i32 };
+    const OtherThing = struct { aahh: u32 };
     var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
     const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
     var world = try ecs.ECS.init(ecs_config);
     defer world.deinit();
 
-    const ent_1 : ecs.Entity = try world.new_entity();
-    const ent_2 : ecs.Entity = try world.new_entity();
-    const ent_3 : ecs.Entity = try world.new_entity();
-    try world.add_component(ent_1, "thing", Thing{.aight = 2});
+    const ent_1: ecs.Entity = try world.new_entity();
+    const ent_2: ecs.Entity = try world.new_entity();
+    const ent_3: ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
     std.debug.assert(ent_1.?.version == 0);
     std.debug.assert(ent_1.?.entity_id == 0);
 
-    try world.add_component(ent_2, "thing", Thing{.aight = 2});
+    try world.add_component(ent_2, "thing", Thing{ .aight = 2 });
     std.debug.assert(ent_2.?.version == 0);
     std.debug.assert(ent_2.?.entity_id == 1);
 
-    try world.add_component(ent_3, "thing", Thing{.aight = 2});
+    try world.add_component(ent_3, "thing", Thing{ .aight = 2 });
     std.debug.assert(ent_3.?.version == 0);
     std.debug.assert(ent_3.?.entity_id == 2);
-    
-    try world.add_component(ent_2, "other-thing", OtherThing{.aahh = 53});
+
+    try world.add_component(ent_2, "other-thing", OtherThing{ .aahh = 53 });
     _ = (try world.get_component(ent_2, "other-thing", OtherThing)).?;
 
     try world.kill_entity(ent_2);
     {
         const attempt_ret = world.get_component(ent_2, "thing", Thing);
-        std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+        std.debug.assert(attempt_ret == ecs.ECSError.OldEntity);
     }
     {
         const attempt_ret = world.get_component(ent_2, "other-thing", OtherThing);
-        std.debug.assert( attempt_ret == ecs.ECSError.OldEntity );
+        std.debug.assert(attempt_ret == ecs.ECSError.OldEntity);
     }
 
-    const new_ent_2 : ecs.Entity = try world.new_entity();
+    const new_ent_2: ecs.Entity = try world.new_entity();
     std.debug.assert(new_ent_2.?.entity_id == 1);
     std.debug.assert(new_ent_2.?.version == 1);
 }
 
 test "Simple Remove Component" {
-    const Thing = struct {aight : i32};
-    
+    const Thing = struct { aight: i32 };
+
     var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
     const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
     var world = try ecs.ECS.init(ecs_config);
     defer world.deinit();
 
-    const ent_1 : ecs.Entity = try world.new_entity();
-    const ent_2 : ecs.Entity = try world.new_entity();
-    try world.add_component(ent_1, "thing", Thing{.aight = 2});
-    try world.add_component(ent_2, "thing", Thing{.aight = 4});
+    const ent_1: ecs.Entity = try world.new_entity();
+    const ent_2: ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
+    try world.add_component(ent_2, "thing", Thing{ .aight = 4 });
     std.debug.assert(ent_1.?.version == 0);
     std.debug.assert(ent_1.?.entity_id == 0);
+    const ent2_thing_before = try world.get_component(ent_2, "thing", Thing);
+
     try world.remove_component(ent_1, "thing");
     const attempt_ret = try world.get_component(ent_1, "thing", Thing);
-    std.debug.assert( attempt_ret == null );
-    const ahh = try world.get_component(ent_2, "thing", Thing);
-    std.debug.assert( ahh.?.*.aight == 4);
+    std.debug.assert(attempt_ret == null);
+    const ent2_thing_after = try world.get_component(ent_2, "thing", Thing);
+    std.debug.assert(ent2_thing_after.?.*.aight == 4);
+    std.debug.assert(@intFromPtr(ent2_thing_before) != @intFromPtr(ent2_thing_after));
 }
 
 test "Complex Remove Component" {
-    const Thing = struct {aight : i32};
-    const OtherThing = struct {aahh : u32};
+    const Thing = struct { aight: i32 };
+    const OtherThing = struct { aahh: u32 };
 
     var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
     const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
     var world = try ecs.ECS.init(ecs_config);
     defer world.deinit();
 
-    const ent_1 : ecs.Entity = try world.new_entity();
+    const ent_1: ecs.Entity = try world.new_entity();
     std.debug.assert(ent_1.?.version == 0);
     std.debug.assert(ent_1.?.entity_id == 0);
-    const ent_2 : ecs.Entity = try world.new_entity();
-    const ent_3 : ecs.Entity = try world.new_entity();
-    const ent_4 : ecs.Entity = try world.new_entity();
-    try world.add_component(ent_1, "thing", Thing{.aight = 2});
-    try world.add_component(ent_2, "thing", Thing{.aight = 53});
-    try world.add_component(ent_3, "thing", Thing{.aight = -1});
-    try world.add_component(ent_4, "thing", Thing{.aight = 8});
-    try world.add_component(ent_1, "other-thing", OtherThing{.aahh = 85});
-    try world.add_component(ent_3, "other-thing", OtherThing{.aahh = 123});
-    try world.add_component(ent_4, "other-thing", OtherThing{.aahh = 5});
-    std.debug.assert( (try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5 );
+    const ent_2: ecs.Entity = try world.new_entity();
+    const ent_3: ecs.Entity = try world.new_entity();
+    const ent_4: ecs.Entity = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
+    try world.add_component(ent_2, "thing", Thing{ .aight = 53 });
+    try world.add_component(ent_3, "thing", Thing{ .aight = -1 });
+    try world.add_component(ent_4, "thing", Thing{ .aight = 8 });
+    try world.add_component(ent_1, "other-thing", OtherThing{ .aahh = 85 });
+    try world.add_component(ent_3, "other-thing", OtherThing{ .aahh = 123 });
+    try world.add_component(ent_4, "other-thing", OtherThing{ .aahh = 5 });
+    std.debug.assert((try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5);
 
     try world.remove_component(ent_1, "other-thing");
-    std.debug.assert( (try world.get_component(ent_1, "thing", Thing)).?.*.aight == 2);
-    std.debug.assert( (try world.get_component(ent_1, "other-thing", OtherThing)) == null );
+    std.debug.assert((try world.get_component(ent_1, "thing", Thing)).?.*.aight == 2);
+    std.debug.assert((try world.get_component(ent_1, "other-thing", OtherThing)) == null);
 
-    std.debug.assert( (try world.get_component(ent_4, "thing", Thing)).?.*.aight == 8 );
+    std.debug.assert((try world.get_component(ent_4, "thing", Thing)).?.*.aight == 8);
     const why = (try world.get_component(ent_4, "other-thing", OtherThing));
     _ = why;
-    std.debug.assert( (try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5 );
+    std.debug.assert((try world.get_component(ent_4, "other-thing", OtherThing)).?.*.aahh == 5);
 
-    std.debug.assert( (try world.get_component(ent_3, "thing", Thing)).?.*.aight == -1 );
-    std.debug.assert( (try world.get_component(ent_3, "other-thing", OtherThing)).?.*.aahh == 123 );
-    
-    std.debug.assert( (try world.get_component(ent_2, "thing", Thing)).?.*.aight == 2 );
-    std.debug.assert( (try world.get_component(ent_2, "other-thing", OtherThing)) == null );
+    std.debug.assert((try world.get_component(ent_3, "thing", Thing)).?.*.aight == -1);
+    std.debug.assert((try world.get_component(ent_3, "other-thing", OtherThing)).?.*.aahh == 123);
+
+    std.debug.assert((try world.get_component(ent_2, "thing", Thing)).?.*.aight == 2);
+    std.debug.assert((try world.get_component(ent_2, "other-thing", OtherThing)) == null);
 }
