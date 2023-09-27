@@ -223,7 +223,7 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, EntityDoesNotHaveComponent }; // Removed : DeadEntity
 pub const ECSConfig = struct { component_allocator: std.mem.Allocator };
 pub const ECS = struct {
-    const EntCompPair = struct {entity : RawEntity, component : []u8};
+    const EntCompPair = struct {entity : RawEntity, component : []const u8};
 
     ecs_config: ECSConfig,
     entity_info: std.ArrayList(EntityInfo),
@@ -266,12 +266,14 @@ pub const ECS = struct {
 
     pub fn queue_kill_entity(self : *Self, entity : Entity) !void {
         try self.check_entity(entity);
-        self.*.kill_queue.AddOne(entity.?);
+        var thing = try self.*.kill_queue.addOne();
+        thing.* = entity.?;
     }
 
-    pub fn queue_remove_component(self : *Self, entity : Entity, component : []u8) !void {
+    pub fn queue_remove_component(self : *Self, entity : Entity, component : []const u8) !void {
         try self.check_entity(entity);
-        self.*.remove_queue.addOne(.{.entity = entity.?, .component = component});
+        var thing = try self.*.remove_queue.addOne();
+        thing.* = .{.entity = entity.?, .component = component};
     }
 
     pub fn remove_queued_components(self : *Self) !void {
@@ -568,14 +570,22 @@ pub const ECS = struct {
                 unreachable;
             };
 
-            @memcpy(component_query, current_components[0..removing_component]);
+            var moved_anything : bool = false;
+            if(removing_component != 0) {
+                @memcpy(component_query, current_components[0..removing_component]);
+                moved_anything = true;
+            }
             if (removing_component != current_archetype.components.count()) { // I dunno what would happen if I didn't have this...
                 @memcpy(component_query[removing_component..], current_components[removing_component + 1 ..]);
+                moved_anything = true;
+            }
+            if(moved_anything == false ){
+                @panic("Shit. No component names were copied. Cope cope seeth ahh!\n");
             }
 
             // find an archetype that matches the 'component_query'. Then
             for (0.., self.*.archetypes.items) |index, *item| {
-                var archetype: *Archetype = &item.*.?;
+                var archetype: *Archetype = &(item.* orelse continue);
                 if (archetype.*.compare(component_query) == true) {
                     // This archetype is the guy.
                     try self.*.move_entity_one(entity, current_archetype_idx, index);

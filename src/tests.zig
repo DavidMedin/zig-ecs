@@ -393,3 +393,46 @@ test "Complex Remove Component" {
     std.debug.assert((try world.get_component(ent_2, "thing", Thing)).?.*.aight == 53);
     std.debug.assert((try world.get_component(ent_2, "other-thing", OtherThing)) == null);
 }
+
+test "Simple Remove Queue" {
+    const Thing = struct { aight: i32 };
+    const OtherThing = struct { aahh: u32 };
+
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
+    try world.add_component(ent_1, "other-thing", OtherThing{ .aahh = 85 });
+    try world.queue_remove_component(ent_1, "thing");
+
+    const ent_2 = try world.new_entity();
+    try world.add_component(ent_2, "thing", Thing{ .aight = 10 });
+    try world.add_component(ent_2, "other-thing", OtherThing{ .aahh = 925 });
+
+    try world.remove_queued_components();
+    std.debug.assert((try world.get_component(ent_1, "thing", Thing)) == null);
+}
+
+test "Simple Kill Queue" {
+    const Thing = struct { aight: i32 };
+    const OtherThing = struct { aahh: u32 };
+
+    var alloc_type = std.heap.GeneralPurposeAllocator(.{}){};
+    const ecs_config = ecs.ECSConfig{ .component_allocator = alloc_type.allocator() };
+    var world = try ecs.ECS.init(ecs_config);
+    defer world.deinit();
+
+    const ent_1 = try world.new_entity();
+    try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
+    try world.add_component(ent_1, "other-thing", OtherThing{ .aahh = 85 });
+    try world.queue_kill_entity(ent_1);
+    const ent_2 = try world.new_entity();
+    try world.add_component(ent_2, "thing", Thing{ .aight = 10 });
+    try world.add_component(ent_2, "other-thing", OtherThing{ .aahh = 925 });
+
+    try world.kill_queued_entities();
+    std.debug.assert(world.get_component(ent_1, "thing", Thing) == ecs.ECSError.OldEntity );
+}
