@@ -417,6 +417,10 @@ pub const ECS = struct {
             from.* = null;
         }
 
+        if(from_index == 0) {
+            entity_info.*.Alive.packed_idx = to.*.entity_count - 1;
+        }
+
         // All of the following steps could be in the above while loop, except that it would do the same thing many times.
         // Instead, we'll find what it needs to do and do it once.
 
@@ -512,12 +516,6 @@ pub const ECS = struct {
         var new_component_storage_erased: *ComponentStorageErased = to_archetype.*.components.getPtr(component_name).?;
         var new_component_storage: *ComponentStorage(@TypeOf(comp_t)) = new_component_storage_erased.*.cast(@TypeOf(comp_t));
         try new_component_storage.*.packed_set.append(comp_t);
-
-        // Is the to_archetype the "Empty Archetype"?
-        if (ent_info.state.Alive.archetype_idx == 0) {
-            // If it is, update the packed set index to reflect it.
-            self.*.entity_info.items[safe_entity].state.Alive.packed_idx = new_component_storage.*.packed_set.items.len - 1;
-        }
     }
 
     // TODO: Return pointer to data
