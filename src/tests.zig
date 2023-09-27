@@ -407,6 +407,7 @@ test "Simple Remove Queue" {
     try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
     try world.add_component(ent_1, "other-thing", OtherThing{ .aahh = 85 });
     try world.queue_remove_component(ent_1, "thing");
+    try world.queue_remove_component(ent_1, "thing");
 
     const ent_2 = try world.new_entity();
     try world.add_component(ent_2, "thing", Thing{ .aight = 10 });
@@ -428,6 +429,7 @@ test "Simple Kill Queue" {
     const ent_1 = try world.new_entity();
     try world.add_component(ent_1, "thing", Thing{ .aight = 2 });
     try world.add_component(ent_1, "other-thing", OtherThing{ .aahh = 85 });
+    try world.queue_kill_entity(ent_1);
     try world.queue_kill_entity(ent_1);
     const ent_2 = try world.new_entity();
     try world.add_component(ent_2, "thing", Thing{ .aight = 10 });

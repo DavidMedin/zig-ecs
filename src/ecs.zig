@@ -85,7 +85,7 @@ const ComponentStorageErased = struct {
                 }
             }.len,
             .swap_del = struct {
-                pub fn swap_del(self : *Self, index : usize) anyerror!void {
+                pub fn swap_del(self: *Self, index: usize) anyerror!void {
                     var hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
                     _ = hidden_self.*.packed_set.swapRemove(index);
                 }
@@ -100,7 +100,7 @@ const ComponentStorageErased = struct {
                     // copy the value
                     // const moving_value: hidden_type = hidden_from.*.packed_set.items[from_index];
                     //Remove the value
-                    const moving_value : hidden_type = hidden_from.*.packed_set.swapRemove(from_index);
+                    const moving_value: hidden_type = hidden_from.*.packed_set.swapRemove(from_index);
                     //write the value to the other component storage.
                     try hidden_self.*.packed_set.append(moving_value);
                 }
@@ -172,7 +172,7 @@ const Archetype = struct {
 
     // Returns true if compare_keys - which is an slice of strings - is exactly the component names of the Archetype.
     pub fn compare(self: *Self, compare_keys: [][]const u8) bool {
-        if(self.*.components.count() != compare_keys.len) {
+        if (self.*.components.count() != compare_keys.len) {
             return false; // We just know that it is false.
         }
         for (self.*.components.keys()) |keys| {
@@ -221,9 +221,10 @@ const EntityInfo = struct { version: u32, state: EntityArche };
 // =======================================================
 
 pub const ECSError = error{ EntityMissingComponent, InvalidEntity, OldEntity, EntityDoesNotHaveComponent }; // Removed : DeadEntity
+
 pub const ECSConfig = struct { component_allocator: std.mem.Allocator };
 pub const ECS = struct {
-    const EntCompPair = struct {entity : RawEntity, component : []const u8};
+    const EntCompPair = struct { entity: RawEntity, component: []const u8 };
 
     ecs_config: ECSConfig,
     entity_info: std.ArrayList(EntityInfo),
@@ -234,23 +235,15 @@ pub const ECS = struct {
     archetypes: std.ArrayList(?Archetype),
     archetype_count: usize,
 
-    remove_queue : std.ArrayList(EntCompPair),
-    kill_queue : std.ArrayList(RawEntity),
+    remove_queue: std.ArrayList(EntCompPair),
+    kill_queue: std.ArrayList(RawEntity),
     next_entity: usize = 0,
 
     const Self = @This();
     pub fn init(ecs_config: ECSConfig) !Self {
         var archetypes = std.ArrayList(?Archetype).init(ecs_config.component_allocator);
         try archetypes.append(Archetype.init_empty(ecs_config.component_allocator));
-        return Self{ 
-            .remove_queue = std.ArrayList(EntCompPair).init(ecs_config.component_allocator),
-            .kill_queue = std.ArrayList(RawEntity).init(ecs_config.component_allocator),
-            .entity_info = std.ArrayList(EntityInfo).init(ecs_config.component_allocator),
-            .archetypes = archetypes,
-            .archetype_count = 1,
-            .next_entity = 0,
-            .ecs_config = ecs_config
-        };
+        return Self{ .remove_queue = std.ArrayList(EntCompPair).init(ecs_config.component_allocator), .kill_queue = std.ArrayList(RawEntity).init(ecs_config.component_allocator), .entity_info = std.ArrayList(EntityInfo).init(ecs_config.component_allocator), .archetypes = archetypes, .archetype_count = 1, .next_entity = 0, .ecs_config = ecs_config };
     }
     pub fn deinit(self: *Self) void {
         for (self.*.archetypes.items) |*maybe_archetype| {
@@ -264,28 +257,40 @@ pub const ECS = struct {
         self.*.remove_queue.deinit();
     }
 
-    pub fn queue_kill_entity(self : *Self, entity : Entity) !void {
+    pub fn queue_kill_entity(self: *Self, entity: Entity) !void {
         try self.check_entity(entity);
         var thing = try self.*.kill_queue.addOne();
         thing.* = entity.?;
     }
 
-    pub fn queue_remove_component(self : *Self, entity : Entity, component : []const u8) !void {
+    pub fn queue_remove_component(self: *Self, entity: Entity, component: []const u8) !void {
         try self.check_entity(entity);
         var thing = try self.*.remove_queue.addOne();
-        thing.* = .{.entity = entity.?, .component = component};
+        thing.* = .{ .entity = entity.?, .component = component };
     }
 
-    pub fn remove_queued_components(self : *Self) !void {
-        for(self.*.remove_queue.items) |item| {
-            try self.remove_component(item.entity, item.component);
+    pub fn remove_queued_components(self: *Self) !void {
+        for (self.*.remove_queue.items) |item| {
+            // Ignore ECS errors.
+            self.remove_component(item.entity, item.component) catch |err| switch (err) {
+                ECSError.OldEntity, ECSError.EntityDoesNotHaveComponent => {},
+                else => {
+                    return err;
+                },
+            };
         }
         self.*.remove_queue.clearAndFree();
     }
 
-    pub fn kill_queued_entities(self : *Self) !void {
-        for(self.*.kill_queue.items) |entity| {
-            try self.*.kill_entity(entity);
+    pub fn kill_queued_entities(self: *Self) !void {
+        for (self.*.kill_queue.items) |entity| {
+            // Ignore ECS errors.
+            self.*.kill_entity(entity) catch |err| switch (err) {
+                ECSError.OldEntity, ECSError.EntityDoesNotHaveComponent => {},
+                else => {
+                    return err;
+                },
+            };
         }
         self.*.kill_queue.clearAndFree();
     }
@@ -330,13 +335,13 @@ pub const ECS = struct {
 
     pub fn new_entity(self: *Self) !Entity {
         // Try to find an entity that is dead.
-        var entity_id : usize = undefined;
-        var new_info: *EntityInfo = for(0..,self.*.entity_info.items) |index, *entity_info| {
-            if(entity_info.*.state == .Dead) {
+        var entity_id: usize = undefined;
+        var new_info: *EntityInfo = for (0.., self.*.entity_info.items) |index, *entity_info| {
+            if (entity_info.*.state == .Dead) {
                 entity_id = index;
                 break entity_info;
             }
-        }else thing: {
+        } else thing: {
             entity_id = self.*.next_entity;
             self.*.next_entity += 1;
             const new_info = try self.*.entity_info.addOne();
@@ -373,7 +378,7 @@ pub const ECS = struct {
     }
 
     // Like move_entity, but asserts that there is only one component difference between the two archetypes.
-    fn move_entity_one(self: *Self, entity : Entity, from_index : usize, to_index : usize) !void {
+    fn move_entity_one(self: *Self, entity: Entity, from_index: usize, to_index: usize) !void {
         var from: *?Archetype = &self.*.archetypes.items[from_index];
         var to: *Archetype = &self.*.archetypes.items[to_index].?;
         const from_component_count: i64 = @intCast(from.*.?.components.count());
@@ -396,17 +401,17 @@ pub const ECS = struct {
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();
         const entity_info: *EntityArche = &self.*.entity_info.items[safe_entity].state;
-        const old_entity_packed_idx : ?usize = entity_info.*.Alive.packed_idx;
+        const old_entity_packed_idx: ?usize = entity_info.*.Alive.packed_idx;
         while (map_iter.next()) |item| {
             const key = item.key_ptr.*;
             const value: *ComponentStorageErased = item.value_ptr;
 
             // If the 'to' archetype has this component, take from!
-            if(to.*.components.getPtr(key)) | to_component_storage| {
+            if (to.*.components.getPtr(key)) |to_component_storage| {
                 try to_component_storage.*.take_from(to_component_storage, value, old_entity_packed_idx.?);
                 entity_info.*.Alive.packed_idx = to_component_storage.*.len(to_component_storage) - 1; // Redundent.
 
-            }else {
+            } else {
                 // If the 'to' archetype doesn't have this archetype, reduce the array size by one.
                 try value.*.swap_del(value, old_entity_packed_idx.?);
             }
@@ -419,7 +424,7 @@ pub const ECS = struct {
             from.* = null;
         }
 
-        if(from_index == 0) {
+        if (from_index == 0) {
             entity_info.*.Alive.packed_idx = to.*.entity_count - 1;
         }
 
@@ -431,7 +436,7 @@ pub const ECS = struct {
         entity_info.*.Alive.archetype_idx = to_index;
 
         // Update entity info for the two entities.
-        if(from.* != null and from_index != 0 and (old_entity_packed_idx.? != from.*.?.entity_count)){
+        if (from.* != null and from_index != 0 and (old_entity_packed_idx.? != from.*.?.entity_count)) {
             // Update the entity we moved in the 'from' archetype. This is needed because we used the 'swapRemove' function.
             // TODO: Get rid of this garbage. Store the entity information right next to each component.
             if (self.*.find_entity(from_index, from.*.?.entity_count)) |moved_entity| {
@@ -525,10 +530,9 @@ pub const ECS = struct {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
         const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
 
-
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
             var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
-            if(component_storage.*.packed_set.items.len <= arche_info.Alive.packed_idx.?) {
+            if (component_storage.*.packed_set.items.len <= arche_info.Alive.packed_idx.?) {
                 @panic("Out of bounds reading\n");
             }
             return &component_storage.*.packed_set.items[arche_info.Alive.packed_idx.?];
@@ -570,8 +574,8 @@ pub const ECS = struct {
                 unreachable;
             };
 
-            var moved_anything : bool = false;
-            if(removing_component != 0) {
+            var moved_anything: bool = false;
+            if (removing_component != 0) {
                 @memcpy(component_query, current_components[0..removing_component]);
                 moved_anything = true;
             }
@@ -579,7 +583,7 @@ pub const ECS = struct {
                 @memcpy(component_query[removing_component..], current_components[removing_component + 1 ..]);
                 moved_anything = true;
             }
-            if(moved_anything == false ){
+            if (moved_anything == false) {
                 @panic("Shit. No component names were copied. Cope cope seeth ahh!\n");
             }
 
@@ -621,15 +625,15 @@ pub const ECS = struct {
         component_storage.*.packed_set.items[entity_info.state.Alive.packed_idx.?] = data;
     }
 
-    pub fn kill_entity(self : *Self, entity : Entity) !void {
-        const safe_entity : usize = try self.*.unwrap_entity(entity);
-        
+    pub fn kill_entity(self: *Self, entity: Entity) !void {
+        const safe_entity: usize = try self.*.unwrap_entity(entity);
+
         // Find the archetype the entity belongs too.
         // move to the "Empty Archetype"
         const arche_idx = self.*.entity_info.items[safe_entity].state.Alive.archetype_idx;
 
         try self.move_entity(entity, arche_idx, 0);
-        
+
         self.*.archetypes.items[0].?.entity_count -= 1; // This archetype has no data to wrestle (yay!)
 
         var entity_info = &self.*.entity_info.items[safe_entity];
@@ -790,5 +794,4 @@ pub fn data_iter(comptime components: anytype) type {
             return self.*.slice;
         }
     };
-    
 }
