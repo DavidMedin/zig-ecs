@@ -1,6 +1,6 @@
 // Author : David Medin
 // Email : david@davidmedin.com
-// Zig Version : 0.12.0-dev.21+ac95cfe44
+// Zig Version : 0.12.0-dev.2036+fc79b22a9
 
 // TODO:
 // [x] Functions for returning information on the system
@@ -80,13 +80,13 @@ const ComponentStorageErased = struct {
 
             .len = struct {
                 pub fn len(self: *Self) usize {
-                    var hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    const hidden: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
                     return hidden.*.packed_set.items.len;
                 }
             }.len,
             .swap_del = struct {
                 pub fn swap_del(self: *Self, index: usize) anyerror!void {
-                    var hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    const hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
                     _ = hidden_self.*.packed_set.swapRemove(index);
                 }
             }.swap_del,
@@ -94,8 +94,8 @@ const ComponentStorageErased = struct {
                 // This function will take the component from 'take_from_this' at index 'from_index' and move it to
                 // self's end. Note, this does not know what an 'ECS' is, and will not adjust the Grand Sparse Set.
                 pub fn take_from(self: *Self, take_from_this: *ComponentStorageErased, from_index: usize) anyerror!void {
-                    var hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
-                    var hidden_from: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(take_from_this.*.ptr));
+                    const hidden_self: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(self.*.ptr));
+                    const hidden_from: *ComponentStorage(hidden_type) = @ptrCast(@alignCast(take_from_this.*.ptr));
 
                     // copy the value
                     // const moving_value: hidden_type = hidden_from.*.packed_set.items[from_index];
@@ -159,7 +159,7 @@ const Archetype = struct {
     pub fn deinit(self: *Self) void {
         var map_iter = self.*.components.iterator();
         while (map_iter.next()) |item| {
-            var storage: *ComponentStorageErased = item.value_ptr;
+            const storage: *ComponentStorageErased = item.value_ptr;
             storage.*.deinit(storage);
         }
         self.*.components.deinit();
@@ -259,13 +259,13 @@ pub const ECS = struct {
 
     pub fn queue_kill_entity(self: *Self, entity: Entity) !void {
         try self.check_entity(entity);
-        var thing = try self.*.kill_queue.addOne();
+        const thing = try self.*.kill_queue.addOne();
         thing.* = entity.?;
     }
 
     pub fn queue_remove_component(self: *Self, entity: Entity, component: []const u8) !void {
         try self.check_entity(entity);
-        var thing = try self.*.remove_queue.addOne();
+        const thing = try self.*.remove_queue.addOne();
         thing.* = .{ .entity = entity.?, .component = component };
     }
 
@@ -336,7 +336,7 @@ pub const ECS = struct {
     pub fn new_entity(self: *Self) !Entity {
         // Try to find an entity that is dead.
         var entity_id: usize = undefined;
-        var new_info: *EntityInfo = for (0.., self.*.entity_info.items) |index, *entity_info| {
+        const new_info: *EntityInfo = for (0.., self.*.entity_info.items) |index, *entity_info| {
             if (entity_info.*.state == .Dead) {
                 entity_id = index;
                 break entity_info;
@@ -379,11 +379,11 @@ pub const ECS = struct {
 
     // Like move_entity, but asserts that there is only one component difference between the two archetypes.
     fn move_entity_one(self: *Self, entity: Entity, from_index: usize, to_index: usize) !void {
-        var from: *?Archetype = &self.*.archetypes.items[from_index];
-        var to: *Archetype = &self.*.archetypes.items[to_index].?;
+        const from: *?Archetype = &self.*.archetypes.items[from_index];
+        const to: *Archetype = &self.*.archetypes.items[to_index].?;
         const from_component_count: i64 = @intCast(from.*.?.components.count());
         const to_component_count: i64 = @intCast(to.*.components.count());
-        std.debug.assert(try std.math.absInt(from_component_count - to_component_count) == 1);
+        std.debug.assert(@abs(from_component_count - to_component_count) == 1);
         return self.move_entity(entity, from_index, to_index);
     }
     // Move an entity from one archetype to another. Obviously, this can be dangerous.
@@ -395,8 +395,8 @@ pub const ECS = struct {
 
         // Incompletely remove component from entity.
         // This will only remove the component
-        var from: *?Archetype = &self.*.archetypes.items[from_index];
-        var to: *Archetype = &self.*.archetypes.items[to_index].?;
+        const from: *?Archetype = &self.*.archetypes.items[from_index];
+        const to: *Archetype = &self.*.archetypes.items[to_index].?;
 
         // Go through all components from the 'from' archetype and move it to the 'to' archetype.
         var map_iter = from.*.?.components.iterator();
@@ -471,7 +471,7 @@ pub const ECS = struct {
 
         // Try to find an archetype that has arch_components and component_name.
         var matching_arch: ?usize = outer: for (0.., self.*.archetypes.items) |arch_idx, *archetype_opt| {
-            var archetype: *Archetype = &(archetype_opt.* orelse continue);
+            const archetype: *Archetype = &(archetype_opt.* orelse continue);
             if (archetype.*.components.count() != arch_component_names.len + 1) continue;
 
             for (arch_component_names) |component| {
@@ -520,8 +520,8 @@ pub const ECS = struct {
         try self.move_entity_one(entity, ent_info.state.Alive.archetype_idx, matching_arch.?);
 
         // Finally, add the new component.
-        var new_component_storage_erased: *ComponentStorageErased = to_archetype.*.components.getPtr(component_name).?;
-        var new_component_storage: *ComponentStorage(@TypeOf(comp_t)) = new_component_storage_erased.*.cast(@TypeOf(comp_t));
+        const new_component_storage_erased: *ComponentStorageErased = to_archetype.*.components.getPtr(component_name).?;
+        const new_component_storage: *ComponentStorage(@TypeOf(comp_t)) = new_component_storage_erased.*.cast(@TypeOf(comp_t));
         try new_component_storage.*.packed_set.append(comp_t);
     }
 
@@ -531,7 +531,7 @@ pub const ECS = struct {
         const arche_info: EntityArche = self.*.entity_info.items[safe_entity].state;
 
         if (self.*.archetypes.items[arche_info.Alive.archetype_idx].?.components.getPtr(component_name)) |component_storage_unwrap| {
-            var component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
+            const component_storage: *ComponentStorage(component_type) = component_storage_unwrap.*.cast(component_type);
             if (component_storage.*.packed_set.items.len <= arche_info.Alive.packed_idx.?) {
                 @panic("Out of bounds reading\n");
             }
@@ -543,9 +543,9 @@ pub const ECS = struct {
 
     pub fn remove_component(self: *Self, entity: Entity, component_name: []const u8) !void {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
-        var entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
+        const entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
 
-        var current_archetype_idx = entity_info.*.state.Alive.archetype_idx;
+        const current_archetype_idx = entity_info.*.state.Alive.archetype_idx;
         var current_archetype: *Archetype = &self.*.archetypes.items[current_archetype_idx].?;
 
         if (current_archetype.*.components.get(component_name) == null) {
@@ -589,7 +589,7 @@ pub const ECS = struct {
 
             // find an archetype that matches the 'component_query'. Then
             for (0.., self.*.archetypes.items) |index, *item| {
-                var archetype: *Archetype = &(item.* orelse continue);
+                const archetype: *Archetype = &(item.* orelse continue);
                 if (archetype.*.compare(component_query) == true) {
                     // This archetype is the guy.
                     try self.*.move_entity_one(entity, current_archetype_idx, index);
@@ -597,11 +597,11 @@ pub const ECS = struct {
                 }
             } else {
                 // There is no archetype that has this set of components, create a new one.
-                var component_storage: []ComponentStorageErased = try self.*.ecs_config.component_allocator.alloc(ComponentStorageErased, component_query.len);
+                const component_storage: []ComponentStorageErased = try self.*.ecs_config.component_allocator.alloc(ComponentStorageErased, component_query.len);
 
                 // Use the component storages from the 'from' archetype to create the component storages we need for the 'to' archetype.
                 for (component_query, component_storage) |component, *item| {
-                    var component_storage_er: *ComponentStorageErased = current_archetype.*.components.getPtr(component).?;
+                    const component_storage_er: *ComponentStorageErased = current_archetype.*.components.getPtr(component).?;
                     item.* = try component_storage_er.*.make_new(component_storage_er);
                 }
 
@@ -618,10 +618,10 @@ pub const ECS = struct {
     // TODO: Maybe remove this, as get_component would return a pointer.
     pub fn write_component(self: *Self, entity: Entity, component_name: []const u8, data: anytype) !void {
         const safe_entity: usize = try self.*.unwrap_entity(entity);
-        var entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
-        var archetype: *Archetype = &(self.*.archetypes.items[entity_info.*.state.Alive.archetype_idx] orelse unreachable);
-        var component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name) orelse return ECSError.EntityDoesNotHaveComponent;
-        var component_storage: *ComponentStorage(@TypeOf(data)) = component_storage_erased.*.cast(@TypeOf(data));
+        const entity_info: *EntityInfo = &self.*.entity_info.items[safe_entity];
+        const archetype: *Archetype = &(self.*.archetypes.items[entity_info.*.state.Alive.archetype_idx] orelse unreachable);
+        const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name) orelse return ECSError.EntityDoesNotHaveComponent;
+        const component_storage: *ComponentStorage(@TypeOf(data)) = component_storage_erased.*.cast(@TypeOf(data));
         component_storage.*.packed_set.items[entity_info.state.Alive.packed_idx.?] = data;
     }
 
@@ -636,7 +636,7 @@ pub const ECS = struct {
 
         self.*.archetypes.items[0].?.entity_count -= 1; // This archetype has no data to wrestle (yay!)
 
-        var entity_info = &self.*.entity_info.items[safe_entity];
+        const entity_info = &self.*.entity_info.items[safe_entity];
         entity_info.*.version += 1;
         entity_info.*.state = .Dead;
     }
@@ -725,7 +725,7 @@ pub fn data_iter(comptime components: anytype) type {
         // an array of member offsets from slice's start.
         pub fn init(ecs: *ECS) @This() {
             const first_archetype: ?usize = for (0.., ecs.*.archetypes.items) |index, *archetype_maybe| {
-                var archetype: *Archetype = &(archetype_maybe.* orelse continue);
+                const archetype: *Archetype = &(archetype_maybe.* orelse continue);
                 if (archetype.*.contains(@constCast(baked_names[0..]))) {
                     break index;
                 }
@@ -741,13 +741,13 @@ pub fn data_iter(comptime components: anytype) type {
             // std.log.debug("Iteration : archetype_idx : {?}", .{self.*.archetype_idx});
             if (self.*.archetype_idx == null) return null;
             const safe_archetype_idx: usize = self.*.archetype_idx.?;
-            var archetype: *Archetype = &self.*.ecs.*.archetypes.items[safe_archetype_idx].?;
+            const archetype: *Archetype = &self.*.ecs.*.archetypes.items[safe_archetype_idx].?;
 
             // std.log.debug("Packed index : {?}", .{self.*.packed_idx});
             if (self.*.packed_idx == null) {
                 //TODO: if this archetype does not have any component (assert, this shouldn't happen) then iterate to the next archetype.
                 for (baked_names, baked_offsets, baked_component_funcs) |component_name, offset, func| {
-                    var component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name).?;
+                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name).?;
                     @as(**anyopaque, @ptrFromInt(@intFromPtr(&self.*.slice) + offset)).* = func(component_storage_erased);
                 }
                 self.*.packed_idx = 0;
@@ -756,13 +756,13 @@ pub fn data_iter(comptime components: anytype) type {
                 self.*.packed_idx = self.*.packed_idx.? + 1;
                 var done_iter_count: usize = 0;
                 for (baked_names, baked_offsets, baked_component_iter_funcs) |component_name, offset, func| {
-                    var component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name).?;
+                    const component_storage_erased: *ComponentStorageErased = archetype.*.components.getPtr(component_name).?;
                     if (self.*.packed_idx.? >= component_storage_erased.*.len(component_storage_erased)) {
                         done_iter_count += 1;
                         continue;
                     }
 
-                    var component_iter: **anyopaque = @ptrFromInt(@intFromPtr(&self.*.slice) + offset);
+                    const component_iter: **anyopaque = @ptrFromInt(@intFromPtr(&self.*.slice) + offset);
                     const iteration_res = func(component_storage_erased, self.*.packed_idx.?);
                     component_iter.* = iteration_res;
                 }
@@ -776,7 +776,7 @@ pub fn data_iter(comptime components: anytype) type {
                     self.*.archetype_idx = self.*.archetype_idx.? + 1;
                     while (self.*.archetype_idx.? < self.*.ecs.archetype_count) {
                         const archetype_maybe: *?Archetype = &self.*.ecs.archetypes.items[self.*.archetype_idx.?];
-                        var iter_archetype: *Archetype = &(archetype_maybe.* orelse {
+                        const iter_archetype: *Archetype = &(archetype_maybe.* orelse {
                             self.*.archetype_idx = self.*.archetype_idx.? + 1;
                             continue;
                         });

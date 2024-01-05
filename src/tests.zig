@@ -20,7 +20,7 @@ test "ECS declaration" {
     const enemy_ent = try world.new_entity();
     _ = enemy_ent;
 
-    var player_comp: meatbag = (try world.get_component(player_ent, "meatbag", meatbag)).?.*;
+    const player_comp: meatbag = (try world.get_component(player_ent, "meatbag", meatbag)).?.*;
     std.debug.print("{}\n", .{player_comp});
 }
 
@@ -54,7 +54,7 @@ test "Complex Archetypes" {
     try world.add_component(ent4, "type3", type3{ .member_1 = 3.3 });
     try world.add_component(ent4, "transform", transform{ .position = .{ .x = 4, .y = 10 }, .rotation = 42.3, .velocity = .{ .x = 0, .y = 1 } });
 
-    var player_comp: meatbag = (try world.get_component(ent1, "meatbag", meatbag)).?.*;
+    const player_comp: meatbag = (try world.get_component(ent1, "meatbag", meatbag)).?.*;
     _ = player_comp;
     _ = (try world.get_component(ent1, "transform", transform)).?.*;
     _ = (try world.get_component(ent2, "type2", type2)).?.*;
@@ -223,7 +223,7 @@ test "Funky Playdate Breaker" {
         const player_brain: ecs.Entity = try world.new_entity();
         try world.add_component(player_brain, "brain", Brain{ .reaction_time = 1, .body = undefined });
         try world.add_component(player_brain, "controls", Controls{ .movement = 0 });
-        var brain_component: *Brain = (try world.get_component(player_brain, "brain", Brain)).?;
+        const brain_component: *Brain = (try world.get_component(player_brain, "brain", Brain)).?;
 
         // Body entity
         const player_body: ecs.Entity = try world.new_entity();
@@ -239,7 +239,7 @@ test "Funky Playdate Breaker" {
         const enemy_brain: ecs.Entity = try world.new_entity();
         try world.add_component(enemy_brain, "brain", Brain{ .reaction_time = 2, .body = undefined });
         try world.add_component(enemy_brain, "controls", Controls{ .movement = 0 });
-        var enemy_brain_component: *Brain = (try world.get_component(enemy_brain, "brain", Brain)).?;
+        const enemy_brain_component: *Brain = (try world.get_component(enemy_brain, "brain", Brain)).?;
 
         //     // Body entity
         const enemy_body: ecs.Entity = try world.new_entity();
@@ -436,5 +436,5 @@ test "Simple Kill Queue" {
     try world.add_component(ent_2, "other-thing", OtherThing{ .aahh = 925 });
 
     try world.kill_queued_entities();
-    std.debug.assert(world.get_component(ent_1, "thing", Thing) == ecs.ECSError.OldEntity );
+    std.debug.assert(world.get_component(ent_1, "thing", Thing) == ecs.ECSError.OldEntity);
 }
